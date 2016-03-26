@@ -3,9 +3,10 @@
 package main
 
 import (
-	"log"
-
 	"."
+	"log"
+	"os"
+	"runtime"
 )
 
 func main() {
@@ -15,5 +16,11 @@ func main() {
 		log.Fatalln(err)
 	}
 	router.Start()
-	<-(chan struct{})(nil)
+	log.Println("Server running on :19132")
+	for {
+		fmt.Scanln()
+		var b [1024 * 1024 * 16]byte
+		n := runtime.Stack(b[:], true)
+		os.Stdout.Write(b[:n])
+	}
 }
