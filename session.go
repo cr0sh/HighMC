@@ -7,7 +7,6 @@ import (
 	"math/rand"
 	"net"
 	"runtime/debug"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 )
 
 const windowSize = 2048
-const chanBufsize = 256
 
 // MaxPingTries defines max retry count on ping timeout.
 // If ping timeouts MaxPingTries + 1 times, session will be closed.
@@ -29,27 +27,23 @@ const RecoveryTimeout = time.Second * 8
 var Sessions map[string]*Session
 
 // SessionLock is a explicit locker for Sessions map.
-var SessionLock = new(sync.Mutex)
 var timeout = time.Millisecond * 2000
 
 // GetSession returns session with given identifier if exists, or creates new one.
 func GetSession(address *net.UDPAddr, sendChannel chan Packet,
 	playerAdder func(*net.UDPAddr) chan<- *bytes.Buffer,
 	playerRemover func(*net.UDPAddr) error) *Session {
-	SessionLock.Lock()
-	defer SessionLock.Unlock()
-	identifier := address.String()
-	if s, ok := Sessions[identifier]; ok {
+	if s, ok := Sessions[address.String()]; ok {
 		return s
 	}
-	log.Println("New session:", identifier)
+	log.Println("New session:", address)
 	sess := new(Session)
 	sess.Init(address)
 	sess.SendChan = sendChannel
 	sess.playerAdder = playerAdder
 	sess.playerRemover = playerRemover
 	go sess.work()
-	Sessions[identifier] = sess
+	Sessions[address.String()] = sess
 	return sess
 }
 
@@ -67,10 +61,9 @@ type Session struct {
 	timeout      *time.Timer
 	mtuSize      uint16
 
-	ackQueue     map[uint32]bool
-	nackQueue    map[uint32]bool
-	recovery     map[uint32]*DataPacket
-	recoveryLock util.Locker
+	ackQueue  map[uint32]bool
+	nackQueue map[uint32]bool
+	recovery  map[uint32]*DataPacket
 
 	packetWindow   map[uint32]bool
 	windowBorder   [2]uint32 // Window range: [windowBorder[0], windowBorder[1])
@@ -103,24 +96,18 @@ func (s *Session) Init(address *net.UDPAddr) {
 	s.ackQueue = make(map[uint32]bool)
 	s.nackQueue = make(map[uint32]bool)
 	s.recovery = make(map[uint32]*DataPacket)
-	s.recoveryLock = util.NewMutex()
 	s.packetWindow = make(map[uint32]bool)
 	s.reliableWindow = make(map[uint32]*EncapsulatedPacket)
 	s.splitTable = make(map[uint16]map[uint32][]byte)
 	s.windowBorder = [2]uint32{0, windowSize}
 	s.reliableBorder = [2]uint32{0, windowSize}
-	s.lastSeq = 1<<32 - 1
-	s.lastMsgIndex = 1<<32 - 1
+	s.lastSeq = ^uint32(0)
+	s.lastMsgIndex = ^uint32(0)
 }
 
 func (s *Session) work() {
 	for {
 		select {
-		case <-s.closed:
-			SessionLock.Lock()
-			delete(Sessions, s.Address.String())
-			SessionLock.Unlock()
-			return
 		case pk := <-s.ReceivedChan:
 			s.handlePacket(pk)
 		case ep := <-s.PlayerChan:
@@ -129,6 +116,7 @@ func (s *Session) work() {
 			s.update()
 		case <-s.timeout.C:
 			if s.Status < 3 || s.pingTries >= MaxPingTries {
+				log.Println("timeout?")
 				s.Close("timeout")
 				break
 			}
@@ -169,7 +157,6 @@ func (s *Session) update() {
 		s.send(b)
 		s.nackQueue = make(map[uint32]bool)
 	}
-	s.recoveryLock.Lock()
 	for seq, pk := range s.recovery {
 		if pk.SendTime.Add(RecoveryTimeout).Before(time.Now()) {
 			s.send(pk.Buffer)
@@ -178,7 +165,6 @@ func (s *Session) update() {
 			break
 		}
 	}
-	s.recoveryLock.Unlock()
 	for seq := range s.packetWindow {
 		if seq < s.windowBorder[0] {
 			delete(s.packetWindow, seq)
@@ -350,8 +336,6 @@ func (s *Session) sendEncapsulatedDirect(ep *EncapsulatedPacket) {
 	dp.Encode()
 	s.send(dp.Buffer)
 	dp.SendTime = time.Now()
-	s.recoveryLock.Lock()
-	defer s.recoveryLock.Unlock()
 	s.recovery[dp.SeqNumber] = dp
 }
 
@@ -364,14 +348,7 @@ func (s *Session) Close(reason string) {
 	s.updateTicker.Stop()
 	s.timeout.Stop()
 	s.closed <- struct{}{}
-	s.playerRemover(s.Address)
 	data := &EncapsulatedPacket{Buffer: bytes.NewBuffer([]byte{0x15})}
 	s.sendEncapsulatedDirect(data)
-	if s.Status >= 3 {
-		close(s.packetChan)
-	}
-	blockLock.Lock()
-	defer blockLock.Unlock()
-	blockList[s.Address.String()] = time.Now().Add(time.Second + time.Millisecond*500)
 	log.Println("Session closed:", reason)
 }

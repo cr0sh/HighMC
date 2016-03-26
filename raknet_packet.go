@@ -113,15 +113,20 @@ func (pk *OpenConnectionRequest1) Handle(session *Session) {
 	if session.Status > 1 {
 		return
 	}
-	log.Println("Handling OCR1: RaknetPacket", pk.Protocol)
+	log.Println("Handling OCR1: Protocol", pk.Protocol)
 	buf := new(bytes.Buffer)
-	pk.Write(buf)
+	p := &OpenConnectionReply1{
+		ServerID: serverID,
+		MtuSize:  uint16(pk.MtuSize),
+	}
+	p.Write(buf)
 	session.Status = 1
 	session.send(buf)
 }
 
 // Write implements RaknetPacket interfaces.
 func (pk *OpenConnectionRequest1) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x05)
 	buf.Write([]byte(RaknetMagic))
 	WriteByte(buf, pk.Protocol)
 	buf.Write(make([]byte, pk.MtuSize-18))
@@ -146,6 +151,7 @@ func (pk *OpenConnectionReply1) Handle(session *Session) {}
 
 // Write implements RaknetPacket interfaces.
 func (pk *OpenConnectionReply1) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x06)
 	buf.Write([]byte(RaknetMagic))
 	WriteLong(buf, pk.ServerID)
 	WriteByte(buf, 0)
@@ -176,13 +182,19 @@ func (pk *OpenConnectionRequest2) Handle(session *Session) {
 	session.ID = pk.ClientID
 	session.mtuSize = pk.MtuSize
 	buf := new(bytes.Buffer)
-	pk.Write(buf)
+	p := &OpenConnectionReply2{
+		ServerID:      serverID,
+		ClientAddress: session.Address,
+		MtuSize:       pk.MtuSize,
+	}
+	p.Write(buf)
 	session.Status = 2
 	session.send(buf)
 }
 
 // Write implements RaknetPacket interfaces.
 func (pk *OpenConnectionRequest2) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x07)
 	buf.Write([]byte(RaknetMagic))
 	WriteAddress(buf, pk.ServerAddress)
 	WriteShort(buf, pk.MtuSize)
@@ -209,6 +221,7 @@ func (pk *OpenConnectionReply2) Handle(session *Session) {}
 
 // Write implements RaknetPacket interfaces.
 func (pk *OpenConnectionReply2) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x08)
 	buf.Write([]byte(RaknetMagic))
 	WriteLong(buf, pk.ServerID)
 	WriteAddress(buf, pk.ClientAddress)
@@ -229,7 +242,7 @@ func (pk *GeneralDataPacket) Read(buf *bytes.Buffer) {
 	dp.Buffer = buf
 	/*
 		log.Println("======= DataPacket dump =======")
-		log.Println(hex.Dump(dp.Payload))
+		log.Println(hex.Dump(dp.Byte()))
 	*/
 	dp.Decode()
 	pk.SeqNumber = dp.SeqNumber
@@ -283,8 +296,6 @@ func (pk *Ack) Read(buf *bytes.Buffer) {
 
 // Handle implements RaknetPacket interfaces.
 func (pk *Ack) Handle(session *Session) {
-	session.recoveryLock.Lock()
-	defer session.recoveryLock.Unlock()
 	for _, seq := range pk.Seqs {
 		if _, ok := session.recovery[seq]; ok {
 			delete(session.recovery, seq)
@@ -341,12 +352,19 @@ func (pk *ClientConnect) Handle(session *Session) {
 		return
 	}
 	buf := new(bytes.Buffer)
-	pk.Read(buf)
+	p := &ServerHandshake{
+		Address:         session.Address,
+		SystemAddresses: AddressTemplate,
+		SendPing:        pk.SendPing,
+		SendPong:        pk.SendPing + 1000,
+	}
+	p.Write(buf)
 	session.sendEncapsulatedDirect(&EncapsulatedPacket{Buffer: buf})
 }
 
 // Write implements RaknetPacket interfaces.
 func (pk *ClientConnect) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x09)
 	WriteLong(buf, pk.ClientID)
 	WriteLong(buf, pk.SendPing)
 	WriteByte(buf, func() byte {
@@ -397,6 +415,7 @@ func (pk *ClientHandshake) Handle(session *Session) {
 
 // Write implements RaknetPacket interfaces.
 func (pk *ClientHandshake) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x13)
 	WriteAddress(buf, pk.Address)
 	for _, addr := range pk.SystemAddresses {
 		WriteAddress(buf, addr)
@@ -430,6 +449,7 @@ func (pk *ServerHandshake) Handle(session *Session) {}
 
 // Write implements RaknetPacket interfaces.
 func (pk *ServerHandshake) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x10)
 	WriteAddress(buf, pk.Address)
 	WriteByte(buf, 0) // Unknown
 	for _, addr := range pk.SystemAddresses {
@@ -460,6 +480,7 @@ func (pk *Ping) Handle(session *Session) {
 
 // Write implements RaknetPacket interfaces.
 func (pk *Ping) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x00)
 	WriteLong(buf, pk.PingID)
 	return
 }
@@ -486,6 +507,7 @@ func (pk *Pong) Handle(session *Session) {
 
 // Write implements RaknetPacket interfaces.
 func (pk *Pong) Write(buf *bytes.Buffer) {
+	buf.WriteByte(0x03)
 	WriteLong(buf, pk.PingID)
 	return
 }

@@ -16,6 +16,8 @@ const (
 	MinecraftProtocol = 45
 	// MinecraftVersion is a human readable minecraft version.
 	MinecraftVersion = "0.14.0"
+
+	chanBufsize = 0
 )
 
 // ServerName contains human readable server name
