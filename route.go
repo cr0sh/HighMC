@@ -2,7 +2,7 @@ package highmc
 
 import (
 	"bytes"
-	"fmt"
+	"log"
 	"math/rand"
 	"net"
 	"time"
@@ -70,8 +70,8 @@ func (r *Router) receivePacket() {
 	for {
 		r.recvBuf = make([]byte, 1024*1024)
 		if n, addr, err = r.conn.ReadFromUDP(r.recvBuf); err != nil {
-			fmt.Println("Error while reading packet:", err)
-			return
+			log.Println("Error while reading packet:", err)
+			continue
 		} else if n > 0 {
 			buf := bytes.NewBuffer(r.recvBuf[0:n])
 			pk := Packet{
@@ -91,7 +91,7 @@ func (r *Router) receivePacket() {
 					Address: addr,
 				}
 				r.sendPacket(pk)
-				return
+				continue
 			}
 			buf.UnreadByte()
 			r.recvChan <- pk
