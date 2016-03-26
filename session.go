@@ -132,9 +132,10 @@ func (s *Session) work() {
 				s.Close("timeout")
 				break
 			}
-			s.sendEncapsulatedDirect(&EncapsulatedPacket{Buffer: new(ping).Write(Fields{
-				"pingID": uint64(rand.Uint32())<<32 | uint64(rand.Uint32()),
-			})})
+			p := &Ping{PingID: uint64(rand.Uint32())<<32 | uint64(rand.Uint32())}
+			buf := new(bytes.Buffer)
+			p.Write(buf)
+			s.sendEncapsulatedDirect(&EncapsulatedPacket{Buffer: buf})
 			s.pingTries++
 			s.timeout.Reset(timeout)
 		}
@@ -209,8 +210,9 @@ func (s *Session) handlePacket(pk Packet) {
 			return timeout
 		}())
 	}
-	if handler := GetHandler(head); handler != nil {
-		handler.Handle(handler.Read(pk.Buffer), s)
+	if handler := GetRaknetPacket(head); handler != nil {
+		handler.Read(pk.Buffer)
+		handler.Handle(s)
 	}
 }
 
@@ -281,8 +283,9 @@ func (s *Session) handleEncapsulated(ep *EncapsulatedPacket) {
 		s.packetChan <- ep.Buffer
 	}
 
-	if handler := GetDataHandler(head); handler != nil {
-		handler.Handle(handler.Read(ep.Buffer), s)
+	if handler := GetDataPacket(head); handler != nil {
+		handler.Read(ep.Buffer)
+		handler.Handle(s)
 	}
 }
 

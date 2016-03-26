@@ -28,7 +28,6 @@ type Router struct {
 
 // CreateRouter create/opens new raknet router with given port.
 func CreateRouter(port uint16) (r *Router, err error) {
-	InitProtocol()
 	Sessions = make(map[string]*Session)
 	r = new(Router)
 	serverID = uint64(rand.Int63())
