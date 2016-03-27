@@ -85,13 +85,18 @@ func (s *Session) Init(address *net.UDPAddr) {
 
 func (s *Session) work() {
 	for {
+		select { // Workaround for first-class priority close signal
+		case <-s.closed:
+			s.updateTicker.Stop()
+			s.timeout.Stop()
+		}
 		select {
+		case <-s.closed:
+			s.updateTicker.Stop()
+			s.timeout.Stop()
+			return
 		case pk := <-s.ReceivedChan:
 			s.handlePacket(pk)
-		case <-s.updateTicker.C:
-			s.update()
-		case <-s.closed:
-			break
 		case <-s.timeout.C:
 			if s.Status < 3 || s.pingTries >= MaxPingTries {
 				log.Println("timeout?")
@@ -104,6 +109,8 @@ func (s *Session) work() {
 			s.sendEncapsulatedDirect(&EncapsulatedPacket{Buffer: buf})
 			s.pingTries++
 			s.timeout.Reset(timeout)
+		case <-s.updateTicker.C:
+			s.update()
 		}
 	}
 }
@@ -335,8 +342,12 @@ func (s *Session) send(pk *bytes.Buffer) {
 
 // Close stops current session.
 func (s *Session) Close(reason string) {
-	s.updateTicker.Stop()
-	s.timeout.Stop()
+	select {
+	case <-s.closed:
+		s.closed <- struct{}{}
+		return
+	default:
+	}
 	s.closed <- struct{}{}
 	s.closed <- struct{}{}
 	data := &EncapsulatedPacket{Buffer: bytes.NewBuffer([]byte{0x15})}
