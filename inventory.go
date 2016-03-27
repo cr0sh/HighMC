@@ -18,9 +18,11 @@ func (pi *PlayerInventory) Init() {
 		inv := make(Inventory, len(CreativeItems))
 		copy(inv, CreativeItems)
 		pi.Inventory = &inv
-		pi.Holder.SendCompressed(&ContainerSetContent{
-			WindowID: CreativeWindow,
-			Slots:    inv,
-		})
+		/*
+			pi.Holder.SendCompressed(&ContainerSetContent{
+				WindowID: CreativeWindow,
+				Slots:    inv,
+			})
+		*/
 	}
 }

@@ -121,35 +121,33 @@ func (lv *Level) OnUseItem(p *Player, x, y, z int32, face byte, item *Item) {
 			goto canceled
 		}
 		lv.Set(x, y, z, block)
-		records := []BlockRecord{
-			{
-				X:     uint32(x),
-				Y:     byte(y),
-				Z:     uint32(z),
-				Block: block,
-				Flags: UpdateAllPriority,
-			},
-		}
-		go func(w <-chan []BlockRecord) {
-			lv.Server.BroadcastPacket(&UpdateBlock{
-				BlockRecords: <-w,
-			})
-		}(lv.requestUpdate(x, y, z, records))
-		return
+		/*
+			records := []BlockRecord{
+				{
+					X:     uint32(x),
+					Y:     byte(y),
+					Z:     uint32(z),
+					Block: block,
+					Flags: UpdateAllPriority,
+				},
+			}
+		*/
 	}
 	// p.SendMessage(fmt.Sprintf("Block %d(%s) already exists on x:%d, y:%d, z: %d", f, ID(f), x, y, z))
 canceled:
-	p.SendPacket(&UpdateBlock{
-		BlockRecords: []BlockRecord{
-			{
-				X:     uint32(x),
-				Y:     byte(y),
-				Z:     uint32(z),
-				Block: lv.Get(x, y, z),
-				Flags: UpdateAllPriority,
+	/*
+		p.SendPacket(&UpdateBlock{
+			BlockRecords: []BlockRecord{
+				{
+					X:     uint32(x),
+					Y:     byte(y),
+					Z:     uint32(z),
+					Block: lv.Get(x, y, z),
+					Flags: UpdateAllPriority,
+				},
 			},
-		},
-	})
+		})
+	*/
 
 }
 
@@ -166,10 +164,12 @@ func (lv *Level) OnRemoveBlock(p *Player, x, y, z int32) {
 		},
 	}
 	go func(w <-chan []BlockRecord) {
-		records := <-w
-		lv.Server.BroadcastPacket(&UpdateBlock{
-			BlockRecords: records,
-		})
+		/*
+			records := <-w
+			lv.Server.BroadcastPacket(&UpdateBlock{
+				BlockRecords: records,
+			})
+		*/
 	}(lv.requestUpdate(x, y, z, records))
 }
 

@@ -244,7 +244,7 @@ func (s *Session) handleEncapsulated(ep *EncapsulatedPacket) {
 	head := ReadByte(ep.Buffer)
 
 	if s.Status > 2 && head == 0x8e {
-		s.Player.HandlePacket(ep.Buffer)
+		// s.Player.HandlePacket(ep.Buffer)
 	}
 
 	if handler := GetDataPacket(head); handler != nil {
