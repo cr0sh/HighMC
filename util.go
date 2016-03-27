@@ -54,6 +54,19 @@ func EncodeDeflate(b []byte) []byte {
 	return o.Bytes()
 }
 
+// GetSortedKeys will return a sorted slice of 'uint' keys from given map.
+func GetSortedKeys(m interface{}) []int {
+	mm := reflect.ValueOf(m)
+	keys := make([]int, len(mm.MapKeys()))
+	i := 0
+	for _, k := range mm.MapKeys() {
+		keys[i] = int(k.Uint())
+		i++
+	}
+	sort.Ints(keys)
+	return keys
+}
+
 // Face/Side indicators
 const (
 	SideDown  = iota // Y-

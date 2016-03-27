@@ -272,7 +272,7 @@ func (s *Session) preEncapsulated(ep *EncapsulatedPacket) {
 			s.reliableBorder[1]++
 			s.handleEncapsulated(ep)
 			if len(s.reliableWindow) > 0 {
-				for _, i := range util.GetSortedKeys(s.reliableWindow) {
+				for _, i := range GetSortedKeys(s.reliableWindow) {
 					if uint32(i)-s.lastMsgIndex != 1 {
 						break
 					}
