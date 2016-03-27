@@ -34,6 +34,7 @@ type Level struct {
 
 	UpdateRequest chan updateRequest
 
+	Server *Server
 	Ticker *time.Ticker
 	Stop   chan struct{}
 }
@@ -130,7 +131,7 @@ func (lv *Level) OnUseItem(p *Player, x, y, z int32, face byte, item *Item) {
 			},
 		}
 		go func(w <-chan []BlockRecord) {
-			BroadcastPacket(&UpdateBlock{
+			lv.Server.BroadcastPacket(&UpdateBlock{
 				BlockRecords: <-w,
 			})
 		}(lv.requestUpdate(x, y, z, records))
@@ -166,7 +167,7 @@ func (lv *Level) OnRemoveBlock(p *Player, x, y, z int32) {
 	}
 	go func(w <-chan []BlockRecord) {
 		records := <-w
-		BroadcastPacket(&UpdateBlock{
+		lv.Server.BroadcastPacket(&UpdateBlock{
 			BlockRecords: records,
 		})
 	}(lv.requestUpdate(x, y, z, records))

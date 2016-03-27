@@ -15,8 +15,4 @@ var BuildTime = "unknown"
 
 var lastEntityID = uint64(1)
 
-var levels = map[string]*Level{
-	defaultLvl: {Name: "dummy"},
-}
-
 var defaultLvl = "default"

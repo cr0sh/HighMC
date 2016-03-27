@@ -13,8 +13,7 @@ import (
 // PlayerCallback is a struct for delivering callbacks to other player goroutines;
 // It is usually used to bypass race issues.
 type PlayerCallback struct {
-	Call func(*Player, interface{})
-	Arg  interface{}
+	Call func(*Player)
 }
 
 type chunkRequest struct {
@@ -32,6 +31,7 @@ type Player struct {
 	EntityID uint64
 	Skin     []byte
 	SkinName string
+	Server   *Server
 
 	Position            Vector3
 	Level               *Level
@@ -49,14 +49,35 @@ type Player struct {
 
 	inventory *PlayerInventory
 
-	recvChan     chan *bytes.Buffer
-	raknetChan   chan<- *EncapsulatedPacket
+	Session      *Session
 	callbackChan chan PlayerCallback
 	updateTicker *time.Ticker
 
 	loggedIn bool
 	spawned  bool
 	closed   bool
+}
+
+// NewPlayer creates new player struct.
+func NewPlayer(addr *net.UDPAddr) *Player {
+	p := new(Player)
+	p.Address = addr
+	p.Level = p.Server.GetDefaultLevel()
+	p.EntityID = atomic.AddUint64(&lastEntityID, 1)
+	p.playerShown = make(map[uint64]struct{})
+
+	p.callbackChan = make(chan PlayerCallback, 128)
+	p.updateTicker = time.NewTicker(time.Millisecond * 500)
+
+	p.fastChunks = make(map[[2]int32]*Chunk)
+	p.fastChunkMutex = new(sync.Mutex)
+	p.chunkRadius = 16
+	p.chunkStop = make(chan struct{}, 1)
+	p.chunkRequest = make(chan chunkRequest, 256)
+	p.chunkNotify = make(chan ChunkDelivery, 16)
+
+	p.inventory = new(PlayerInventory)
+	return p
 }
 
 func (p *Player) process() {
@@ -66,13 +87,8 @@ func (p *Player) process() {
 	go p.updateChunk()
 	for {
 		select {
-		case buf, ok := <-p.recvChan:
-			if !ok {
-				return
-			}
-			p.HandlePacket(buf)
 		case callback := <-p.callbackChan:
-			callback.Call(p, callback.Arg)
+			callback.Call(p)
 		case <-p.updateTicker.C:
 			cx, cz := int32(p.Position.X)>>4, int32(p.Position.Z)>>4
 			chunkHold := make(map[[2]int32]struct{})
@@ -221,13 +237,6 @@ func (p *Player) handleDataPacket(pk MCPEPacket) (err error) {
 		if p.loggedIn {
 			return
 		}
-		// iteratorLock.Lock() FIXME
-		if len(Sessions) >= int(atomic.LoadInt32(&MaxPlayers)) { // FIXME
-			// iteratorLock.Unlock() FIXME
-			p.disconnect("Server is full!")
-			return
-		}
-		// iteratorLock.Unlock() FIXME
 		p.Username = pk.Username
 
 		ret := &PlayStatus{}
@@ -299,7 +308,7 @@ func (p *Player) handleDataPacket(pk MCPEPacket) (err error) {
 		if pk.TextType == TextTypeTranslation {
 			return
 		}
-		Message(fmt.Sprintf("<%s> %s", p.Username, pk.Message))
+		p.Server.Message(fmt.Sprintf("<%s> %s", p.Username, pk.Message))
 
 	case *MovePlayer:
 		pk := pk.(*MovePlayer)
@@ -405,8 +414,8 @@ func (p *Player) updateMove(pk *MovePlayer) {
 	p.Position.X, p.Position.Y, p.Position.Z = pk.X, pk.Y, pk.Z
 	p.Yaw, p.BodyYaw, p.Pitch = pk.Yaw, pk.BodyYaw, pk.Pitch
 
-	go BroadcastCallback(PlayerCallback{
-		Call: func(pl *Player, arg interface{}) {
+	p.Server.BroadcastCallback(PlayerCallback{
+		Call: func(pl *Player) {
 			if pl.IsVisible(p) {
 				pl.SendPacket(&MoveEntity{
 					EntityIDs: []uint64{p.EntityID},
@@ -429,8 +438,8 @@ func (p *Player) firstSpawn() {
 		return
 	}
 
-	BroadcastCallback(PlayerCallback{
-		Call: func(player *Player, arg interface{}) {
+	p.Server.BroadcastCallback(PlayerCallback{
+		Call: func(player *Player) {
 			player.ShowPlayer(p)
 			player.SendPacket(&PlayerList{
 				Type: PlayerListAdd,
@@ -445,7 +454,7 @@ func (p *Player) firstSpawn() {
 	})
 
 	var entries []PlayerListEntry
-	AsPlayers(func(pl *Player) {
+	p.Server.AsPlayers(func(pl *Player) {
 		p.ShowPlayer(pl)
 		entries = append(entries, PlayerListEntry{
 			RawUUID:  pl.UUID,
@@ -465,11 +474,11 @@ func (p *Player) firstSpawn() {
 			Status: PlayerSpawn,
 		})
 
-		SpawnPlayer(p)
+		p.Server.SpawnPlayer(p)
 		p.RunAs(PlayerCallback{
-			Call: func(pl *Player, arg interface{}) {
+			Call: func(pl *Player) {
 				p.spawned = true
-				Message(p.Username + " joined")
+				p.Server.Message(p.Username + " joined")
 				log.Println(p.Username + " joined the game")
 				p.SendMessage("Hello, this is lav7 test server!")
 			},
@@ -493,7 +502,7 @@ func (p *Player) disconnect(msg string) {
 	})
 
 	// SessionLock.Lock() FIXME
-	s, ok := Sessions[p.Address.String()]
+	s, ok := p.Server.Sessions[p.Address.String()]
 	// SessionLock.Unlock() FIXME
 	if ok {
 		s.Close(msg)
@@ -502,7 +511,7 @@ func (p *Player) disconnect(msg string) {
 
 // BroadcastOthers broadcasts MCPEPacket except player self.
 func (p *Player) BroadcastOthers(pk MCPEPacket) {
-	AsPlayers(func(pl *Player) {
+	p.Server.AsPlayers(func(pl *Player) {
 		if !pl.IsSelf(p) {
 			pl.SendPacket(pk)
 		}
@@ -526,7 +535,7 @@ func (p *Player) SendDirect(pk MCPEPacket) {
 	ep.Buffer = buf
 
 	// SessionLock.Lock() FIXME
-	s, ok := Sessions[p.Address.String()]
+	s, ok := p.Server.Sessions[p.Address.String()]
 	// SessionLock.Unlock() FIXME
 
 	if ok {
@@ -557,5 +566,5 @@ func (p *Player) Send(buf *bytes.Buffer) {
 	ep := new(EncapsulatedPacket)
 	ep.Reliability = 2
 	ep.Buffer = buf
-	p.raknetChan <- ep
+	p.Session.SendEncapsulated(ep)
 }

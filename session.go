@@ -23,37 +23,16 @@ const MaxPingTries uint64 = 3
 // Once the packet is sent, the packet will be on recoery queue in RecoveryTimeout duration.
 const RecoveryTimeout = time.Second * 8
 
-// Sessions contains each raknet client sessions.
-var Sessions map[string]*Session
-
 // SessionLock is a explicit locker for Sessions map.
 var timeout = time.Millisecond * 2000
-
-// GetSession returns session with given identifier if exists, or creates new one.
-func GetSession(address *net.UDPAddr, sendChannel chan Packet,
-	playerAdder func(*net.UDPAddr) chan<- *bytes.Buffer,
-	playerRemover func(*net.UDPAddr) error) *Session {
-	if s, ok := Sessions[address.String()]; ok {
-		return s
-	}
-	log.Println("New session:", address)
-	sess := new(Session)
-	sess.Init(address)
-	sess.SendChan = sendChannel
-	sess.playerAdder = playerAdder
-	sess.playerRemover = playerRemover
-	go sess.work()
-	Sessions[address.String()] = sess
-	return sess
-}
 
 // Session contains player specific values for raknet-level communication.
 type Session struct {
 	Status       byte
-	ReceivedChan chan Packet              // Packet from router
-	SendChan     chan Packet              // Send request to router
-	PlayerChan   chan *EncapsulatedPacket // Send request from player
-	packetChan   chan<- *bytes.Buffer     // Packet delivery to player
+	ReceivedChan chan Packet // Packet from router
+	SendChan     chan Packet // Send request to router
+	Player       *Player
+	Server       *Server
 
 	ID           uint64
 	Address      *net.UDPAddr
@@ -88,8 +67,7 @@ type Session struct {
 func (s *Session) Init(address *net.UDPAddr) {
 	s.Address = address
 	s.ReceivedChan = make(chan Packet, chanBufsize)
-	s.PlayerChan = make(chan *EncapsulatedPacket, chanBufsize)
-	s.closed = make(chan struct{}, 1)
+	s.closed = make(chan struct{}, 2)
 	s.updateTicker = time.NewTicker(time.Millisecond * 100)
 	s.timeout = time.NewTimer(time.Millisecond * 1500)
 	s.seqNumber = 1<<32 - 1
@@ -110,10 +88,10 @@ func (s *Session) work() {
 		select {
 		case pk := <-s.ReceivedChan:
 			s.handlePacket(pk)
-		case ep := <-s.PlayerChan:
-			s.SendEncapsulated(ep)
 		case <-s.updateTicker.C:
 			s.update()
+		case <-s.closed:
+			break
 		case <-s.timeout.C:
 			if s.Status < 3 || s.pingTries >= MaxPingTries {
 				log.Println("timeout?")
@@ -266,7 +244,7 @@ func (s *Session) handleEncapsulated(ep *EncapsulatedPacket) {
 	head := ReadByte(ep.Buffer)
 
 	if s.Status > 2 && head == 0x8e {
-		s.packetChan <- ep.Buffer
+		s.Player.HandlePacket(ep.Buffer)
 	}
 
 	if handler := GetDataPacket(head); handler != nil {
@@ -279,7 +257,19 @@ func (s *Session) connComplete() {
 	if s.Status != 3 {
 		return
 	}
-	s.packetChan = s.playerAdder(s.Address)
+	s.Player = NewPlayer(s.Address)
+	ok := make(chan string, 1)
+	s.Server.registerRequest <- struct {
+		player *Player
+		ok     chan string
+	}{
+		s.Player,
+		ok,
+	}
+	if err := <-ok; err != "" {
+		log.Println("Auth failed for", s.Address, err)
+		s.Close(err)
+	}
 }
 
 // SendEncapsulated processes EncapsulatedPacket informations before sending.
@@ -347,6 +337,7 @@ func (s *Session) send(pk *bytes.Buffer) {
 func (s *Session) Close(reason string) {
 	s.updateTicker.Stop()
 	s.timeout.Stop()
+	s.closed <- struct{}{}
 	s.closed <- struct{}{}
 	data := &EncapsulatedPacket{Buffer: bytes.NewBuffer([]byte{0x15})}
 	s.sendEncapsulatedDirect(data)

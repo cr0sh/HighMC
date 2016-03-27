@@ -20,20 +20,42 @@ type Router struct {
 	playerRemover func(*net.UDPAddr) error
 	closeNotify   chan *net.UDPAddr
 	recvBuf       []byte
+
+	Sessions map[string]*Session
+	Owner    *Server
 }
 
 // CreateRouter create/opens new raknet router with given port.
 func CreateRouter(port uint16) (r *Router, err error) {
-	Sessions = make(map[string]*Session)
 	r = new(Router)
 	serverID = uint64(rand.Int63())
 	r.sendChan = make(chan Packet, chanBufsize)
 	r.recvChan = make(chan Packet, chanBufsize)
 	r.conn, err = net.ListenUDP("udp", &net.UDPAddr{Port: int(port)})
 	r.closeNotify = make(chan *net.UDPAddr, chanBufsize)
+	r.Sessions = make(map[string]*Session)
 	// r.playerAdder = playerAdder
 	// r.playerRemover = playerRemover
 	return
+}
+
+// GetSession returns session with given identifier if exists, or creates new one.
+func (r *Router) GetSession(address *net.UDPAddr, sendChannel chan Packet,
+	playerAdder func(*net.UDPAddr) chan<- *bytes.Buffer,
+	playerRemover func(*net.UDPAddr) error) *Session {
+	if s, ok := r.Sessions[address.String()]; ok {
+		return s
+	}
+	log.Println("New session:", address)
+	sess := new(Session)
+	sess.Init(address)
+	sess.SendChan = sendChannel
+	sess.playerAdder = playerAdder
+	sess.playerRemover = playerRemover
+	sess.Server = r.Owner
+	go sess.work()
+	r.Sessions[address.String()] = sess
+	return sess
 }
 
 // Start makes router process network I/O operations.
@@ -48,14 +70,14 @@ func (r *Router) work() {
 	for {
 		select {
 		case s := <-r.closeNotify:
-			delete(Sessions, s.String())
+			delete(r.Sessions, s.String())
 			blockList[s.String()] = time.Now().Add(time.Second + time.Millisecond*750)
 		case pk := <-r.recvChan:
 			if blockList[pk.Address.String()].After(time.Now()) {
 				r.conn.WriteToUDP([]byte("\x80\x00\x00\x00\x00\x00\x08\x15"), pk.Address)
 			} else {
 				delete(blockList, pk.Address.String())
-				GetSession(pk.Address, r.sendChan, r.playerAdder, r.playerRemover).ReceivedChan <- pk
+				r.GetSession(pk.Address, r.sendChan, r.playerAdder, r.playerRemover).ReceivedChan <- pk
 			}
 		default:
 			r.updateSession()
@@ -100,7 +122,7 @@ func (r *Router) receivePacket() {
 }
 
 func (r *Router) updateSession() {
-	for _, sess := range Sessions {
+	for _, sess := range r.Sessions {
 		select {
 		case <-sess.closed:
 			r.closeNotify <- sess.Address

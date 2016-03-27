@@ -1,52 +1,66 @@
 package highmc
 
 import (
-	"bytes"
 	"fmt"
 	"log"
 	"net"
 	"os"
-	"sync"
 	"sync/atomic"
-	"time"
 )
 
-// RegisterPlayer registers player to the server and returns packet handler function for it.
-func RegisterPlayer(addr *net.UDPAddr) (handlerChan chan<- *bytes.Buffer) {
-	identifier := addr.String()
-	if _, ok := Sessions[identifier]; ok {
-		fmt.Println("Duplicate authentication from", addr)
-		// Sessions[identifier].disconnect("Logged in from another location") FIXME
+// Server is a main server object.
+type Server struct {
+	*Router
+	OpenSessions    map[string]struct{}
+	Levels          map[string]*Level
+	callbackRequest chan func(*Player)
+	registerRequest chan struct {
+		player *Player
+		ok     chan string
 	}
+}
 
-	p := new(Player)
-	p.Address = addr
-	p.Level = GetDefaultLevel()
-	p.EntityID = atomic.AddUint64(&lastEntityID, 1)
-	p.playerShown = make(map[uint64]struct{})
+// NewServer creates new server object.
+func NewServer() *Server {
+	s := new(Server)
+	s.OpenSessions = make(map[string]struct{})
+	s.Levels = map[string]*Level{
+		defaultLvl: {Name: "dummy", Server: s},
+	}
+	s.callbackRequest = make(chan func(*Player), chanBufsize)
+	s.registerRequest = make(chan struct {
+		player *Player
+		ok     chan string
+	}, chanBufsize)
+	return s
+}
 
-	ch := make(chan *bytes.Buffer, 64)
-	p.recvChan = ch
-	p.raknetChan = Sessions[identifier].PlayerChan
-	p.callbackChan = make(chan PlayerCallback, 128)
-	p.updateTicker = time.NewTicker(time.Millisecond * 500)
+// HeartBeat processes requests to server.
+func (s *Server) HeartBeat() {
+	for {
+		select {
+		case callback := <-s.callbackRequest:
+			for addr := range s.OpenSessions {
+				callback(s.Sessions[addr].Player)
+			}
+		case req := <-s.registerRequest:
+			req.ok <- s.RegisterPlayer(req.player)
+		}
+	}
+}
 
-	p.fastChunks = make(map[[2]int32]*Chunk)
-	p.fastChunkMutex = new(sync.Mutex)
-	p.chunkRadius = 16
-	p.chunkStop = make(chan struct{}, 1)
-	p.chunkRequest = make(chan chunkRequest, 256)
-	p.chunkNotify = make(chan ChunkDelivery, 16)
-
-	p.inventory = new(PlayerInventory)
-	/* FIXME
-		iteratorLock.Lock()
-		Sessions[identifier] = p
-		iteratorLock.Unlock()
-	    atomic.AddInt32(&OnlineSessions, 1)
-	*/
-	go p.process()
-	return ch
+// RegisterPlayer registers player to the server.
+func (s *Server) RegisterPlayer(player *Player) string {
+	identifier := player.Address.String()
+	if _, ok := s.OpenSessions[identifier]; ok {
+		fmt.Println("Duplicate authentication from", identifier)
+		s.Sessions[identifier].Player.disconnect("Logged in from another location")
+	}
+	if len(s.OpenSessions) >= int(atomic.LoadInt32(&MaxPlayers)) {
+		return "Server is full"
+	}
+	s.OpenSessions[player.Address.String()] = struct{}{}
+	return ""
 }
 
 // UnregisterPlayer removes player from server.
@@ -82,77 +96,28 @@ func UnregisterPlayer(addr *net.UDPAddr) error {
 // AsPlayers executes given callback with every online players.
 //
 // Warning: callbacks are executed in separate, copied map of lav7.Sessions. Callbacks can run with disconnected player.
-func AsPlayers(callback func(*Player)) {
-	/*
-		iteratorLock.Lock() FIXME
-		pm := getMapCopy()
-		iteratorLock.Unlock()
-		for _, p := range pm {
-			callback(p)
-		}
-	*/
-}
-
-// AsPlayersAsync is similar to AsPlayers, buf spawns new goroutine for each players.
-// It returns sync.WaitGroup struct to synchronize with callbacks.
-//
-// Warning: this could be a lot of overhead. Use with caution.
-func AsPlayersAsync(callback func(*Player)) *sync.WaitGroup {
-	// iteratorLock.Lock() FIXME
-	pm := getMapCopy()
-	// iteratorLock.Unlock()
-	wg := new(sync.WaitGroup)
-	for _, p := range pm {
-		wg.Add(1)
-		go func(pp *Player, w *sync.WaitGroup) {
-			callback(pp)
-			w.Done()
-		}(p, wg)
-	}
-	return wg
-}
-
-// AsPlayersError is similar to AsPlayers, but breaks iteration if callback returns error
-func AsPlayersError(callback func(*Player) error) error {
-	// iteratorLock.Lock() FIXME
-	pm := getMapCopy()
-	// iteratorLock.Unlock() FIXME
-	for _, p := range pm {
-		if err := callback(p); err != nil {
-			return err
-		}
-	}
-	return nil
+func (s *Server) AsPlayers(callback func(*Player)) {
+	s.callbackRequest <- callback
 }
 
 // BroadcastCallback is same as AsPlayers(RunAs())
-func BroadcastCallback(callback PlayerCallback) {
-	AsPlayers(func(p *Player) {
+func (s *Server) BroadcastCallback(callback PlayerCallback) {
+	s.AsPlayers(func(p *Player) {
 		p.RunAs(callback)
 	})
 }
 
-func getMapCopy() map[string]*Player {
-	m := make(map[string]*Player)
-	/* FIXME
-	for k := range Sessions {
-		m[k] = Sessions[k]
-	}
-	*/
-	return m
-}
-
 // Message broadcasts message, and logs to console.
-func Message(msg string) {
-	AsPlayers(func(pl *Player) {
+func (s *Server) Message(msg string) {
+	s.AsPlayers(func(pl *Player) {
 		pl.SendMessage(msg)
 	})
 	log.Println(msg)
 }
 
 // SpawnPlayer shows given player to all players, except given player itself.
-func SpawnPlayer(player *Player) {
-	AsPlayers(func(p *Player) {
+func (s *Server) SpawnPlayer(player *Player) {
+	s.AsPlayers(func(p *Player) {
 		if p.spawned && p.EntityID != player.EntityID {
 			p.ShowPlayer(player)
 		}
@@ -160,35 +125,33 @@ func SpawnPlayer(player *Player) {
 }
 
 // BroadcastPacket sends given packet to all online players.
-func BroadcastPacket(pk MCPEPacket) {
-	/* FIXME
-	for _, p := range Sessions {
-		p.SendPacket(pk)
+func (s *Server) BroadcastPacket(pk MCPEPacket) {
+	for addr := range s.OpenSessions {
+		s.Sessions[addr].Player.SendPacket(pk)
 	}
-	*/
 }
 
 // GetLevel returns level reference with given name if exists, or nil.
-func GetLevel(name string) *Level {
-	if l, ok := levels[name]; ok {
+func (s *Server) GetLevel(name string) *Level {
+	if l, ok := s.Levels[name]; ok {
 		return l
 	}
 	return nil
 }
 
 // GetDefaultLevel returns default level reference.
-func GetDefaultLevel() *Level {
-	return levels[defaultLvl]
+func (s *Server) GetDefaultLevel() *Level {
+	return s.Levels[defaultLvl]
 }
 
 // Stop stops entire server.
-func Stop(reason string) {
+func (s *Server) Stop(reason string) {
 	if reason == "" {
 		reason = "no reason"
 	}
 	log.Println("Stopping server: " + reason)
-	AsPlayers(func(p *Player) { p.Kick("Server stop: " + reason) })
-	for _, l := range levels {
+	s.AsPlayers(func(p *Player) { p.Kick("Server stop: " + reason) })
+	for _, l := range s.Levels {
 		l.Save()
 	}
 	os.Exit(0)
