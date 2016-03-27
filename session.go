@@ -3,7 +3,6 @@ package highmc
 import (
 	"bytes"
 	"log"
-	"math"
 	"math/rand"
 	"net"
 	"runtime/debug"
@@ -26,19 +25,29 @@ const RecoveryTimeout = time.Second * 8
 // SessionLock is a explicit locker for Sessions map.
 var timeout = time.Millisecond * 2000
 
+type ackUpdate struct {
+	got  bool // true: got ACK/NACK, false: remove ACK/NACK queue
+	nack bool // true: NACK, false: ACK
+	seqs []uint32
+}
+
 // Session contains player specific values for raknet-level communication.
 type Session struct {
-	Status       byte
-	ReceivedChan chan Packet // Packet from router
-	SendChan     chan Packet // Send request to router
-	Player       *Player
-	Server       *Server
+	Status           byte
+	ReceivedChan     chan Packet // Packet from router
+	SendChan         chan Packet // Send request to router
+	EncapsulatedChan chan *EncapsulatedPacket
+	AckChan          chan ackUpdate
 
-	ID           uint64
-	Address      *net.UDPAddr
-	updateTicker *time.Ticker
-	timeout      *time.Timer
-	mtuSize      uint16
+	Player *Player
+	Server *Server
+
+	ID                 uint64
+	Address            *net.UDPAddr
+	updateTicker       *time.Ticker
+	windowUpdateTicker *time.Ticker
+	timeout            *time.Timer
+	mtuSize            uint32
 
 	ackQueue  map[uint32]bool
 	nackQueue map[uint32]bool
@@ -66,19 +75,28 @@ type Session struct {
 // Init sets initial value for session.
 func (s *Session) Init(address *net.UDPAddr) {
 	s.Address = address
+
 	s.ReceivedChan = make(chan Packet, chanBufsize)
+	s.EncapsulatedChan = make(chan *EncapsulatedPacket, chanBufsize)
 	s.closed = make(chan struct{}, 2)
+
 	s.updateTicker = time.NewTicker(time.Millisecond * 100)
+	s.windowUpdateTicker = time.NewTicker(time.Millisecond * 100)
 	s.timeout = time.NewTimer(time.Millisecond * 1500)
-	s.seqNumber = 1<<32 - 1
+
 	s.ackQueue = make(map[uint32]bool)
 	s.nackQueue = make(map[uint32]bool)
 	s.recovery = make(map[uint32]*DataPacket)
+
+	s.seqNumber = 1<<32 - 1
 	s.packetWindow = make(map[uint32]bool)
 	s.reliableWindow = make(map[uint32]*EncapsulatedPacket)
+
 	s.splitTable = make(map[uint16]map[uint32][]byte)
+
 	s.windowBorder = [2]uint32{0, windowSize}
 	s.reliableBorder = [2]uint32{0, windowSize}
+
 	s.lastSeq = ^uint32(0)
 	s.lastMsgIndex = ^uint32(0)
 }
@@ -89,6 +107,7 @@ func (s *Session) work() {
 		case <-s.closed:
 			s.updateTicker.Stop()
 			s.timeout.Stop()
+		default:
 		}
 		select {
 		case <-s.closed:
@@ -109,6 +128,34 @@ func (s *Session) work() {
 			s.sendEncapsulatedDirect(&EncapsulatedPacket{Buffer: buf})
 			s.pingTries++
 			s.timeout.Reset(timeout)
+		case <-s.windowUpdateTicker.C:
+			s.windowUpdate()
+		}
+	}
+}
+
+func (s *Session) sendAsync() {
+	for {
+		select { // Workaround for first-class priority close signal
+		case <-s.closed:
+			s.updateTicker.Stop()
+			s.timeout.Stop()
+		default:
+		}
+		select {
+		case <-s.closed:
+			return
+		case ep := <-s.EncapsulatedChan:
+			dp := new(DataPacket)
+			dp.Head = 0x80
+			dp.SeqNumber = atomic.AddUint32(&s.seqNumber, 1)
+			dp.Packets = []*EncapsulatedPacket{ep}
+			dp.Encode()
+			s.send(dp.Buffer)
+			dp.SendTime = time.Now()
+			s.recovery[dp.SeqNumber] = dp
+		case u := <-s.AckChan:
+			s.handleAckUpdate(u)
 		case <-s.updateTicker.C:
 			s.update()
 		}
@@ -150,14 +197,40 @@ func (s *Session) update() {
 			break
 		}
 	}
+}
+
+func (s *Session) windowUpdate() {
 	for seq := range s.packetWindow {
-		if seq < s.windowBorder[0] {
+		if seq < atomic.LoadUint32(&s.windowBorder[0]) {
 			delete(s.packetWindow, seq)
 		} else {
 			break
 		}
 	}
-	// TODO: Send datapackets from queue
+}
+
+func (s *Session) handleAckUpdate(u ackUpdate) {
+	if u.got {
+		if u.nack {
+			for _, seq := range u.seqs {
+				if dp, ok := s.recovery[seq]; ok {
+					s.send(dp.Buffer)
+				}
+			}
+		} else {
+			for _, seq := range u.seqs {
+				if _, ok := s.recovery[seq]; ok {
+					delete(s.recovery, seq)
+				}
+			}
+		}
+	} else {
+		if u.nack {
+
+		} else {
+
+		}
+	}
 }
 
 func (s *Session) handlePacket(pk Packet) {
@@ -251,7 +324,7 @@ func (s *Session) handleEncapsulated(ep *EncapsulatedPacket) {
 	head := ReadByte(ep.Buffer)
 
 	if s.Status > 2 && head == 0x8e {
-		// s.Player.HandlePacket(ep.Buffer)
+		// s.Player.HandlePacket(ep.Buffer) // FIXME
 	}
 
 	if handler := GetDataPacket(head); handler != nil {
@@ -294,12 +367,17 @@ func (s *Session) SendEncapsulated(ep *EncapsulatedPacket) {
 		s.splitID++
 		splitIndex := uint32(0)
 		toSend := ep.Len()
+		mtu := (atomic.LoadUint32(&s.mtuSize) - 34)
+		splitCount := uint32(ep.Len()) / mtu
+		if uint32(ep.Len())%mtu != 0 {
+			splitCount++
+		}
 		for ep.Len() > 0 {
 			buf := ep.Next(int(s.mtuSize) - 34)
 			sp := new(EncapsulatedPacket)
 			sp.SplitID = splitID
 			sp.HasSplit = true
-			sp.SplitCount = uint32(math.Ceil(float64(ep.Len()) / float64(s.mtuSize-34)))
+			sp.SplitCount = splitCount
 			sp.Reliability = ep.Reliability
 			sp.SplitIndex = splitIndex
 			sp.Buffer = bytes.NewBuffer(buf)
@@ -315,13 +393,10 @@ func (s *Session) SendEncapsulated(ep *EncapsulatedPacket) {
 				sp.OrderIndex = ep.OrderIndex
 			}
 			splitIndex++
-			s.sendEncapsulatedDirect(sp)
-		}
-		if toSend != 0 {
-			log.Fatalln("ERROR: toSend assert 0 failed:", toSend)
+			s.EncapsulatedChan <- ep
 		}
 	} else {
-		s.sendEncapsulatedDirect(ep)
+		s.EncapsulatedChan <- ep
 	}
 }
 
@@ -332,8 +407,6 @@ func (s *Session) sendEncapsulatedDirect(ep *EncapsulatedPacket) {
 	dp.Packets = []*EncapsulatedPacket{ep}
 	dp.Encode()
 	s.send(dp.Buffer)
-	dp.SendTime = time.Now()
-	s.recovery[dp.SeqNumber] = dp
 }
 
 func (s *Session) send(pk *bytes.Buffer) {

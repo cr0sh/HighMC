@@ -5,6 +5,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"sync/atomic"
 )
 
 var handlers = map[byte]RaknetPacket{
@@ -180,7 +181,7 @@ func (pk *OpenConnectionRequest2) Handle(session *Session) {
 	}
 	log.Println("Handling OCR2: clientID", pk.ClientID)
 	session.ID = pk.ClientID
-	session.mtuSize = pk.MtuSize
+	atomic.StoreUint32(&session.mtuSize, uint32(pk.MtuSize))
 	buf := new(bytes.Buffer)
 	p := &OpenConnectionReply2{
 		ServerID:      serverID,
@@ -255,20 +256,23 @@ func (pk *GeneralDataPacket) Handle(session *Session) {
 		return
 	}
 	session.packetWindow[pk.SeqNumber] = true
-	session.ackQueue[pk.SeqNumber] = true
+	session.AckChan <- ackUpdate{seqs: []uint32{pk.SeqNumber}}
 	diff := pk.SeqNumber - session.lastSeq
 	if diff != 1 {
 		for i := session.lastSeq + 1; i < pk.SeqNumber; i++ {
+			var seqs []uint32
 			if _, ok := session.packetWindow[i]; !ok {
-				// log.Println("Seqnumber", i, "is missing. Adding to NACK queue.")
-				session.nackQueue[i] = true
+				seqs = append(seqs, i)
+			}
+			if len(seqs) > 0 {
+				session.AckChan <- ackUpdate{nack: true, seqs: seqs}
 			}
 		}
 	}
 	if diff >= 1 {
 		session.lastSeq = pk.SeqNumber
-		session.windowBorder[0] += diff
-		session.windowBorder[1] += diff
+		atomic.AddUint32(&session.windowBorder[0], diff)
+		atomic.AddUint32(&session.windowBorder[1], diff)
 		for _, pk := range pk.Packets {
 			session.preEncapsulated(pk)
 		}
@@ -296,11 +300,7 @@ func (pk *Ack) Read(buf *bytes.Buffer) {
 
 // Handle implements RaknetPacket interfaces.
 func (pk *Ack) Handle(session *Session) {
-	for _, seq := range pk.Seqs {
-		if _, ok := session.recovery[seq]; ok {
-			delete(session.recovery, seq)
-		}
-	}
+	session.AckChan <- ackUpdate{got: true, seqs: pk.Seqs}
 }
 
 // Write implements RaknetPacket interfaces.
@@ -320,6 +320,7 @@ func (pk *Nack) Read(buf *bytes.Buffer) {
 
 // Handle implements RaknetPacket interfaces.
 func (pk *Nack) Handle(session *Session) {
+	session.AckChan <- ackUpdate{got: true, nack: true, seqs: pk.Seqs}
 	for _, seq := range pk.Seqs {
 		if _, ok := session.nackQueue[seq]; ok {
 			delete(session.nackQueue, seq)
