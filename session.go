@@ -337,19 +337,7 @@ func (s *Session) connComplete() {
 	if s.Status != 3 {
 		return
 	}
-	s.Player = NewPlayer(s.Address)
-	ok := make(chan string, 1)
-	s.Server.registerRequest <- struct {
-		player *Player
-		ok     chan string
-	}{
-		s.Player,
-		ok,
-	}
-	if err := <-ok; err != "" {
-		log.Println("Auth failed for", s.Address, err)
-		s.Close(err)
-	}
+	s.Player = NewPlayer(s)
 }
 
 // SendEncapsulated processes EncapsulatedPacket informations before sending.

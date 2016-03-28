@@ -3,6 +3,7 @@ package highmc
 import (
 	"bytes"
 	"log"
+	"sync/atomic"
 )
 
 // Packet IDs
@@ -133,8 +134,14 @@ type MCPEPacket interface {
 	Write() *bytes.Buffer
 }
 
-// GetPacket returns Packet struct with given pid.
-func GetPacket(pid byte) MCPEPacket {
+// Handleable is an interface for handling received MCPE packets.
+type Handleable interface {
+	MCPEPacket
+	Handle(*Player) error
+}
+
+// GetMCPEPacket returns MCPEPacket struct with given pid.
+func GetMCPEPacket(pid byte) MCPEPacket {
 	pk, _ := packets[pid]
 	return pk
 }
@@ -151,10 +158,10 @@ type Login struct {
 	Skin           []byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i Login) Pid() byte { return LoginHead } // 0x8f
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *Login) Read(buf *bytes.Buffer) {
 	BatchRead(buf, &i.Username, &i.Proto1)
 	if i.Proto1 < MinecraftProtocol { // Old protocol
@@ -166,13 +173,29 @@ func (i *Login) Read(buf *bytes.Buffer) {
 	i.Skin = []byte(ReadString(buf))
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i Login) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, i.Username, i.Proto1, i.Proto2,
 		i.ClientID, i.RawUUID[:], i.ServerAddress,
 		i.ClientSecret, i.SkinName, string(i.Skin))
 	return buf
+}
+
+// Handle implements Handleable interface.
+func (i Login) Handle(p *Player) error {
+	p.Username = i.Username
+	if i.proto1 > MinecraftProtocol {
+		// Close session
+		return
+	} else if i.proto1 < MinecraftProtocol {
+		// Close session
+		return
+	}
+	p.ID, p.UUID, p.Secret, p.EntityID, p.Skin, p.SkinName =
+		i.ClientID, i.RawUUID, i.ClientSecret, atomic.AddUint64(&lastEntityID, 1), i.Skin, i.SkinName
+	// Init pos, etc.
+	p.Server.RegisterPlayer(p)
 }
 
 // Packet-specific constants
@@ -188,15 +211,15 @@ type PlayStatus struct {
 	Status uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i *PlayStatus) Pid() byte { return PlayStatusHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *PlayStatus) Read(buf *bytes.Buffer) {
 	i.Status = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i *PlayStatus) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.Status)
@@ -208,15 +231,15 @@ type Disconnect struct {
 	Message string
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i *Disconnect) Pid() byte { return DisconnectHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *Disconnect) Read(buf *bytes.Buffer) {
 	i.Message = ReadString(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i *Disconnect) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteString(buf, i.Message)
@@ -228,10 +251,10 @@ type Batch struct {
 	Payloads [][]byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i Batch) Pid() byte { return BatchHead } // 0x92
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *Batch) Read(buf *bytes.Buffer) {
 	i.Payloads = make([][]byte, 0)
 	payload, err := DecodeDeflate(buf.Next(int(ReadInt(buf))))
@@ -250,7 +273,7 @@ func (i *Batch) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i Batch) Write() *bytes.Buffer {
 	b := new(bytes.Buffer)
 	for _, pk := range i.Payloads {
@@ -281,10 +304,10 @@ type Text struct {
 	Params   []string
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i Text) Pid() byte { return TextHead } // 0x93
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *Text) Read(buf *bytes.Buffer) {
 	i.TextType = ReadByte(buf)
 	switch i.TextType {
@@ -303,7 +326,7 @@ func (i *Text) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i Text) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.TextType)
@@ -338,16 +361,16 @@ type SetTime struct {
 	Started bool
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i SetTime) Pid() byte { return SetTimeHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *SetTime) Read(buf *bytes.Buffer) {
 	i.Time = uint32((ReadInt(buf) / 19200) * FullTime)
 	i.Started = ReadBool(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i SetTime) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, uint32((i.Time*19200)/FullTime))
@@ -366,10 +389,10 @@ type StartGame struct {
 	X, Y, Z                float32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i StartGame) Pid() byte { return StartGameHead } // 0x95
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *StartGame) Read(buf *bytes.Buffer) {
 	BatchRead(buf, &i.Seed, &i.Dimension, &i.Generator,
 		&i.Gamemode, &i.EntityID, &i.SpawnX,
@@ -377,7 +400,7 @@ func (i *StartGame) Read(buf *bytes.Buffer) {
 		&i.Y, &i.Z)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i StartGame) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, i.Seed, i.Dimension, i.Generator,
@@ -399,10 +422,10 @@ type AddPlayer struct {
 	Metadata               []byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i AddPlayer) Pid() byte { return AddPlayerHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *AddPlayer) Read(buf *bytes.Buffer) {
 	copy(i.RawUUID[:], buf.Next(16))
 	BatchRead(buf, &i.Username, &i.EntityID,
@@ -412,7 +435,7 @@ func (i *AddPlayer) Read(buf *bytes.Buffer) {
 	i.Metadata = buf.Bytes()
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i AddPlayer) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, i.RawUUID[:], i.Username, i.EntityID,
@@ -429,16 +452,16 @@ type RemovePlayer struct {
 	RawUUID  [16]byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i RemovePlayer) Pid() byte { return RemovePlayerHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *RemovePlayer) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	copy(i.RawUUID[:], buf.Next(16))
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i RemovePlayer) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -458,10 +481,10 @@ type AddEntity struct {
 	Link3                  byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i AddEntity) Pid() byte { return AddEntityHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *AddEntity) Read(buf *bytes.Buffer) {
 	BatchRead(buf, &i.EntityID, &i.Type,
 		&i.X, &i.Y, &i.Z,
@@ -471,7 +494,7 @@ func (i *AddEntity) Read(buf *bytes.Buffer) {
 	// TODO
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i AddEntity) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, i.EntityID, i.Type,
@@ -488,15 +511,15 @@ type RemoveEntity struct {
 	EntityID uint64
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i RemoveEntity) Pid() byte { return RemoveEntityHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *RemoveEntity) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i RemoveEntity) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -515,10 +538,10 @@ type AddItemEntity struct {
 	SpeedZ   float32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i AddItemEntity) Pid() byte { return AddItemEntityHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *AddItemEntity) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	i.Item = new(Item)
@@ -531,7 +554,7 @@ func (i *AddItemEntity) Read(buf *bytes.Buffer) {
 	i.SpeedZ = ReadFloat(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i AddItemEntity) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -551,16 +574,16 @@ type TakeItemEntity struct {
 	EntityID uint64
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i TakeItemEntity) Pid() byte { return TakeItemEntityHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *TakeItemEntity) Read(buf *bytes.Buffer) {
 	i.Target = ReadLong(buf)
 	i.EntityID = ReadLong(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i TakeItemEntity) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.Target)
@@ -574,10 +597,10 @@ type MoveEntity struct {
 	EntityPos [][6]float32 // X, Y, Z, Yaw, HeadYaw, Pitch
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i MoveEntity) Pid() byte { return MoveEntityHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *MoveEntity) Read(buf *bytes.Buffer) {
 	entityCnt := ReadInt(buf)
 	i.EntityIDs = make([]uint64, entityCnt)
@@ -590,7 +613,7 @@ func (i *MoveEntity) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i MoveEntity) Write() *bytes.Buffer {
 	if len(i.EntityIDs) != len(i.EntityPos) {
 		panic("Entity data slice length mismatch")
@@ -626,10 +649,10 @@ type MovePlayer struct {
 	OnGround byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i MovePlayer) Pid() byte { return MovePlayerHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *MovePlayer) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	i.X = ReadFloat(buf)
@@ -642,7 +665,7 @@ func (i *MovePlayer) Read(buf *bytes.Buffer) {
 	i.OnGround = ReadByte(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i MovePlayer) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -664,10 +687,10 @@ type RemoveBlock struct {
 	Y        byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i RemoveBlock) Pid() byte { return RemoveBlockHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *RemoveBlock) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	i.X = ReadInt(buf)
@@ -675,7 +698,7 @@ func (i *RemoveBlock) Read(buf *bytes.Buffer) {
 	i.Y = ReadByte(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i RemoveBlock) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -709,10 +732,10 @@ type UpdateBlock struct {
 	BlockRecords []BlockRecord
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i UpdateBlock) Pid() byte { return UpdateBlockHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *UpdateBlock) Read(buf *bytes.Buffer) {
 	records := ReadInt(buf)
 	i.BlockRecords = make([]BlockRecord, records)
@@ -734,7 +757,7 @@ func (i *UpdateBlock) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i UpdateBlock) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, uint32(len(i.BlockRecords)))
@@ -754,10 +777,10 @@ type AddPainting struct {
 	Title     string
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i AddPainting) Pid() byte { return AddPaintingHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *AddPainting) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	i.X = ReadInt(buf)
@@ -767,7 +790,7 @@ func (i *AddPainting) Read(buf *bytes.Buffer) {
 	i.Title = ReadString(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i AddPainting) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -785,10 +808,10 @@ type Explode struct {
 	Records         [][3]byte // X, Y, Z byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i Explode) Pid() byte { return ExplodeHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *Explode) Read(buf *bytes.Buffer) {
 	BatchRead(buf, &i.X, &i.Y, &i.Z, &i.Radius)
 	cnt := ReadInt(buf)
@@ -798,7 +821,7 @@ func (i *Explode) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i Explode) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, i.X, i.Y, i.Z, i.Radius)
@@ -850,10 +873,10 @@ type LevelEvent struct {
 	Data    uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i LevelEvent) Pid() byte { return LevelEventHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *LevelEvent) Read(buf *bytes.Buffer) {
 	i.EventID = ReadShort(buf)
 	i.X = ReadFloat(buf)
@@ -862,7 +885,7 @@ func (i *LevelEvent) Read(buf *bytes.Buffer) {
 	i.Data = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i LevelEvent) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteShort(buf, i.EventID)
@@ -882,10 +905,10 @@ type BlockEvent struct {
 	Case2 uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i BlockEvent) Pid() byte { return BlockEventHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *BlockEvent) Read(buf *bytes.Buffer) {
 	i.X = ReadInt(buf)
 	i.Y = ReadInt(buf)
@@ -894,7 +917,7 @@ func (i *BlockEvent) Read(buf *bytes.Buffer) {
 	i.Case2 = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i BlockEvent) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.X)
@@ -931,16 +954,16 @@ type EntityEvent struct {
 	Event    byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i EntityEvent) Pid() byte { return EntityEventHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *EntityEvent) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	i.Event = ReadByte(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i EntityEvent) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -965,10 +988,10 @@ type MobEffect struct {
 	Duration  uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i MobEffect) Pid() byte { return MobEffectHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *MobEffect) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	i.EventID = ReadByte(buf)
@@ -978,7 +1001,7 @@ func (i *MobEffect) Read(buf *bytes.Buffer) {
 	i.Duration = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i MobEffect) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -995,13 +1018,13 @@ type UpdateAttributes struct {
 	// TODO: implement this after NBT is done
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i UpdateAttributes) Pid() byte { return UpdateAttributesHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *UpdateAttributes) Read(buf *bytes.Buffer) {}
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i UpdateAttributes) Write() *bytes.Buffer { return nil }
 
 // MobEquipment needs to be documented.
@@ -1012,10 +1035,10 @@ type MobEquipment struct {
 	SelectedSlot byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i MobEquipment) Pid() byte { return MobEquipmentHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *MobEquipment) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	i.Item = new(Item)
@@ -1024,7 +1047,7 @@ func (i *MobEquipment) Read(buf *bytes.Buffer) {
 	i.SelectedSlot = ReadByte(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i MobEquipment) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -1040,10 +1063,10 @@ type MobArmorEquipment struct {
 	Slots    [4]*Item
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i MobArmorEquipment) Pid() byte { return MobArmorEquipmentHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *MobArmorEquipment) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	for j := range i.Slots {
@@ -1052,7 +1075,7 @@ func (i *MobArmorEquipment) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i MobArmorEquipment) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -1068,16 +1091,16 @@ type Interact struct {
 	Target uint64
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i Interact) Pid() byte { return InteractHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *Interact) Read(buf *bytes.Buffer) {
 	i.Action = ReadByte(buf)
 	i.Target = ReadLong(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i Interact) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.Action)
@@ -1094,10 +1117,10 @@ type UseItem struct {
 	Item                   *Item
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i UseItem) Pid() byte { return UseItemHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *UseItem) Read(buf *bytes.Buffer) {
 	BatchRead(buf, &i.X, &i.Y, &i.Z,
 		&i.Face, &i.FloatX, &i.FloatY, &i.FloatZ,
@@ -1106,7 +1129,7 @@ func (i *UseItem) Read(buf *bytes.Buffer) {
 	i.Item.Read(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i UseItem) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, i.X, i.Y, i.Z,
@@ -1143,10 +1166,10 @@ type PlayerAction struct {
 	Face     uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i PlayerAction) Pid() byte { return PlayerActionHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *PlayerAction) Read(buf *bytes.Buffer) {
 	i.EntityID = ReadLong(buf)
 	i.Action = ReadInt(buf)
@@ -1156,7 +1179,7 @@ func (i *PlayerAction) Read(buf *bytes.Buffer) {
 	i.Face = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i PlayerAction) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.EntityID)
@@ -1173,15 +1196,15 @@ type HurtArmor struct {
 	Health byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i HurtArmor) Pid() byte { return HurtArmorHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *HurtArmor) Read(buf *bytes.Buffer) {
 	i.Health = ReadByte(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i HurtArmor) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.Health)
@@ -1191,13 +1214,13 @@ func (i HurtArmor) Write() *bytes.Buffer {
 // SetEntityData needs to be documented.
 type SetEntityData struct{} // TODO Metadata
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i SetEntityData) Pid() byte { return SetEntityDataHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *SetEntityData) Read(buf *bytes.Buffer) {}
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i SetEntityData) Write() *bytes.Buffer {
 	return nil
 }
@@ -1208,10 +1231,10 @@ type SetEntityMotion struct {
 	EntityMotion [][6]float32 // X, Y, Z, Yaw, HeadYaw, Pitch
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i SetEntityMotion) Pid() byte { return SetEntityMotionHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *SetEntityMotion) Read(buf *bytes.Buffer) {
 	entityCnt := ReadInt(buf)
 	i.EntityIDs = make([]uint64, entityCnt)
@@ -1224,7 +1247,7 @@ func (i *SetEntityMotion) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i SetEntityMotion) Write() *bytes.Buffer {
 	if len(i.EntityIDs) != len(i.EntityMotion) {
 		panic("Entity data slice length mismatch")
@@ -1247,17 +1270,17 @@ type SetEntityLink struct {
 	Type byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i SetEntityLink) Pid() byte { return SetEntityLinkHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *SetEntityLink) Read(buf *bytes.Buffer) {
 	i.From = ReadLong(buf)
 	i.To = ReadLong(buf)
 	i.Type = ReadByte(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i SetEntityLink) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteLong(buf, i.From)
@@ -1271,15 +1294,15 @@ type SetHealth struct {
 	Health uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i SetHealth) Pid() byte { return SetHealthHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *SetHealth) Read(buf *bytes.Buffer) {
 	i.Health = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i SetHealth) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.Health)
@@ -1293,17 +1316,17 @@ type SetSpawnPosition struct {
 	Z uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i SetSpawnPosition) Pid() byte { return SetSpawnPositionHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *SetSpawnPosition) Read(buf *bytes.Buffer) {
 	i.X = ReadInt(buf)
 	i.Y = ReadInt(buf)
 	i.Z = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i SetSpawnPosition) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.X)
@@ -1318,16 +1341,16 @@ type Animate struct {
 	EntityID uint64
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i Animate) Pid() byte { return AnimateHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *Animate) Read(buf *bytes.Buffer) {
 	i.Action = ReadByte(buf)
 	i.EntityID = ReadLong(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i Animate) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.Action)
@@ -1342,17 +1365,17 @@ type Respawn struct {
 	Z float32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i Respawn) Pid() byte { return RespawnHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *Respawn) Read(buf *bytes.Buffer) {
 	i.X = ReadFloat(buf)
 	i.Y = ReadFloat(buf)
 	i.Z = ReadFloat(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i Respawn) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteFloat(buf, i.X)
@@ -1367,17 +1390,17 @@ type DropItem struct {
 	Item *Item
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i DropItem) Pid() byte { return DropItemHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *DropItem) Read(buf *bytes.Buffer) {
 	i.Type = ReadByte(buf)
 	i.Item = new(Item)
 	i.Item.Read(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i DropItem) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, i.Type, i.Item.Write())
@@ -1394,10 +1417,10 @@ type ContainerOpen struct {
 	Z        uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i ContainerOpen) Pid() byte { return ContainerOpenHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *ContainerOpen) Read(buf *bytes.Buffer) {
 	i.WindowID = ReadByte(buf)
 	i.Type = ReadByte(buf)
@@ -1407,7 +1430,7 @@ func (i *ContainerOpen) Read(buf *bytes.Buffer) {
 	i.Z = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i ContainerOpen) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.WindowID)
@@ -1424,15 +1447,15 @@ type ContainerClose struct {
 	WindowID byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i ContainerClose) Pid() byte { return ContainerCloseHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *ContainerClose) Read(buf *bytes.Buffer) {
 	i.WindowID = ReadByte(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i ContainerClose) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.WindowID)
@@ -1447,10 +1470,10 @@ type ContainerSetSlot struct { // TODO: implement this after slots
 	Item       *Item
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i ContainerSetSlot) Pid() byte { return ContainerSetSlotHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *ContainerSetSlot) Read(buf *bytes.Buffer) {
 	i.Windowid = ReadByte(buf)
 	i.Slot = ReadShort(buf)
@@ -1459,7 +1482,7 @@ func (i *ContainerSetSlot) Read(buf *bytes.Buffer) {
 	i.Item.Read(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i ContainerSetSlot) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.Windowid)
@@ -1476,17 +1499,17 @@ type ContainerSetData struct {
 	Value    uint16
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i ContainerSetData) Pid() byte { return ContainerSetDataHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *ContainerSetData) Read(buf *bytes.Buffer) {
 	i.WindowID = ReadByte(buf)
 	i.Property = ReadShort(buf)
 	i.Value = ReadShort(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i ContainerSetData) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.WindowID)
@@ -1509,10 +1532,10 @@ type ContainerSetContent struct {
 	Hotbar   []uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i ContainerSetContent) Pid() byte { return ContainerSetContentHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *ContainerSetContent) Read(buf *bytes.Buffer) {
 	i.WindowID = ReadByte(buf)
 	count := ReadShort(buf)
@@ -1533,7 +1556,7 @@ func (i *ContainerSetContent) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i ContainerSetContent) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.WindowID)
@@ -1554,25 +1577,25 @@ func (i ContainerSetContent) Write() *bytes.Buffer {
 // CraftingData needs to be documented.
 type CraftingData struct{} // TODO
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i CraftingData) Pid() byte { return CraftingDataHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *CraftingData) Read(buf *bytes.Buffer) {}
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i CraftingData) Write() *bytes.Buffer { return nil }
 
 // CraftingEvent needs to be documented.
 type CraftingEvent struct{} // TODO
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i CraftingEvent) Pid() byte { return CraftingEventHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *CraftingEvent) Read(buf *bytes.Buffer) {}
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i CraftingEvent) Write() *bytes.Buffer { return nil }
 
 // AdventureSettings needs to be documented.
@@ -1580,15 +1603,15 @@ type AdventureSettings struct {
 	Flags uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i AdventureSettings) Pid() byte { return AdventureSettingsHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *AdventureSettings) Read(buf *bytes.Buffer) {
 	i.Flags = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i AdventureSettings) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.Flags)
@@ -1603,10 +1626,10 @@ type BlockEntityData struct {
 	NamedTag []byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i BlockEntityData) Pid() byte { return BlockEntityDataHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *BlockEntityData) Read(buf *bytes.Buffer) {
 	i.X = ReadInt(buf)
 	i.Y = ReadInt(buf)
@@ -1614,7 +1637,7 @@ func (i *BlockEntityData) Read(buf *bytes.Buffer) {
 	i.NamedTag = buf.Bytes()
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i BlockEntityData) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.X)
@@ -1637,16 +1660,16 @@ type FullChunkData struct {
 	Payload        []byte
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i FullChunkData) Pid() byte { return FullChunkDataHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *FullChunkData) Read(buf *bytes.Buffer) {
 	BatchRead(buf, &i.ChunkX, &i.ChunkZ, &i.Order)
 	i.Payload = buf.Next(int(ReadInt(buf)))
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i FullChunkData) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, i.ChunkX, i.ChunkZ, i.Order,
@@ -1659,15 +1682,15 @@ type SetDifficulty struct {
 	Difficulty uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i SetDifficulty) Pid() byte { return SetDifficultyHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *SetDifficulty) Read(buf *bytes.Buffer) {
 	i.Difficulty = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i SetDifficulty) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.Difficulty)
@@ -1679,15 +1702,15 @@ type SetPlayerGametype struct {
 	Gamemode uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i SetPlayerGametype) Pid() byte { return SetPlayerGametypeHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *SetPlayerGametype) Read(buf *bytes.Buffer) {
 	i.Gamemode = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i SetPlayerGametype) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.Gamemode)
@@ -1714,10 +1737,10 @@ type PlayerList struct {
 	PlayerEntries []PlayerListEntry
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i PlayerList) Pid() byte { return PlayerListHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *PlayerList) Read(buf *bytes.Buffer) {
 	i.Type = ReadByte(buf)
 	entryCnt := ReadInt(buf)
@@ -1737,7 +1760,7 @@ func (i *PlayerList) Read(buf *bytes.Buffer) {
 	}
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i PlayerList) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteByte(buf, i.Type)
@@ -1761,15 +1784,15 @@ type RequestChunkRadius struct {
 	Radius uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i RequestChunkRadius) Pid() byte { return RequestChunkRadiusHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *RequestChunkRadius) Read(buf *bytes.Buffer) {
 	i.Radius = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i RequestChunkRadius) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.Radius)
@@ -1781,15 +1804,15 @@ type ChunkRadiusUpdate struct {
 	Radius uint32
 }
 
-// Pid implements proto.Packet interface.
+// Pid implements MCPEPacket interface.
 func (i ChunkRadiusUpdate) Pid() byte { return ChunkRadiusUpdateHead }
 
-// Read implements proto.Packet interface.
+// Read implements MCPEPacket interface.
 func (i *ChunkRadiusUpdate) Read(buf *bytes.Buffer) {
 	i.Radius = ReadInt(buf)
 }
 
-// Write implements proto.Packet interface.
+// Write implements MCPEPacket interface.
 func (i ChunkRadiusUpdate) Write() *bytes.Buffer {
 	buf := new(bytes.Buffer)
 	WriteInt(buf, i.Radius)

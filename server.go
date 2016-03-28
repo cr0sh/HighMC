@@ -1,5 +1,7 @@
 package highmc
 
+import "fmt"
+
 // Server is a main server object.
 type Server struct {
 	*Router
@@ -25,4 +27,21 @@ func NewServer() *Server {
 		ok     chan string
 	}, chanBufsize)
 	return s
+}
+
+// RegisterPlayer attempts to register the player to server.
+func (s *Server) RegisterPlayer(p *Player) error {
+	ok := make(chan string, 1)
+	s.registerRequest <- struct {
+		player *Player
+		ok     chan string
+	}{
+		p,
+		ok,
+	}
+	res := <-ok
+	if res != "" {
+		return fmt.Errorf(res)
+	}
+	return nil
 }

@@ -1,6 +1,9 @@
 package highmc
 
 import (
+	"bytes"
+	"encoding/hex"
+	"log"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -20,6 +23,7 @@ type chunkRequest struct {
 
 // Player is a struct for handling/containing MCPE client specific things.
 type Player struct {
+	*Session
 	Address  *net.UDPAddr
 	Username string
 	ID       uint64
@@ -28,7 +32,6 @@ type Player struct {
 	EntityID uint64
 	Skin     []byte
 	SkinName string
-	Server   *Server
 
 	Position            Vector3
 	Level               *Level
@@ -36,19 +39,9 @@ type Player struct {
 
 	playerShown map[uint64]struct{}
 
-	fastChunks     map[[2]int32]*Chunk
-	fastChunkMutex *sync.Mutex
-	chunkRadius    int32
-	chunkRequest   chan chunkRequest
-	chunkStop      chan struct{}
-	chunkNotify    chan ChunkDelivery
-	pending        map[[2]int32]time.Time
-
 	inventory *PlayerInventory
 
-	Session      *Session
-	callbackChan chan PlayerCallback
-	updateTicker *time.Ticker
+	Session *Session
 
 	loggedIn bool
 	spawned  bool
@@ -56,9 +49,9 @@ type Player struct {
 }
 
 // NewPlayer creates new player struct.
-func NewPlayer(addr *net.UDPAddr) *Player {
+func NewPlayer(session *Session) *Player {
 	p := new(Player)
-	p.Address = addr
+	p.Session = session
 	// p.Level = p.Server.GetDefaultLevel()
 	p.EntityID = atomic.AddUint64(&lastEntityID, 1)
 	p.playerShown = make(map[uint64]struct{})
@@ -75,4 +68,23 @@ func NewPlayer(addr *net.UDPAddr) *Player {
 
 	p.inventory = new(PlayerInventory)
 	return p
+}
+
+// HandlePacket handles MCPE data packet.
+func (p *Player) HandlePacket(buf *bytes.Buffer) {
+	head := ReadByte(buf)
+	pk := GetMCPEPacket(head)
+	if pk == nil {
+		log.Println("[!] Unexpected packet head:", hex.EncodeToString([]byte{head}))
+		return
+	}
+	var ok bool
+	var handle Handleable
+	if handle, ok = pk.(Handleable); !ok {
+		return // There is no handler for the packet
+	}
+	pk.Read(buf)
+	if err := pk.Handle(p); err != nil {
+		log.Println("Error while handling packet:", err)
+	}
 }
