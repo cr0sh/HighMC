@@ -183,19 +183,20 @@ func (i Login) Write() *bytes.Buffer {
 }
 
 // Handle implements Handleable interface.
-func (i Login) Handle(p *Player) error {
+func (i Login) Handle(p *Player) (err error) {
 	p.Username = i.Username
-	if i.proto1 > MinecraftProtocol {
-		// Close session
+	if i.Proto1 > MinecraftProtocol {
+		p.Disconnect("Outdated server")
 		return
-	} else if i.proto1 < MinecraftProtocol {
-		// Close session
+	} else if i.Proto1 < MinecraftProtocol {
+		p.Disconnect("Outdated client")
 		return
 	}
 	p.ID, p.UUID, p.Secret, p.EntityID, p.Skin, p.SkinName =
 		i.ClientID, i.RawUUID, i.ClientSecret, atomic.AddUint64(&lastEntityID, 1), i.Skin, i.SkinName
 	// Init pos, etc.
 	p.Server.RegisterPlayer(p)
+	return
 }
 
 // Packet-specific constants

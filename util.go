@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"reflect"
+	"sort"
 )
 
 // Try runs tryFunc, catches panic, and executes panicHandle with recovered panic.

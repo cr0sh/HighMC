@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"log"
-	"net"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -24,7 +23,6 @@ type chunkRequest struct {
 // Player is a struct for handling/containing MCPE client specific things.
 type Player struct {
 	*Session
-	Address  *net.UDPAddr
 	Username string
 	ID       uint64
 	UUID     [16]byte
@@ -41,11 +39,10 @@ type Player struct {
 
 	inventory *PlayerInventory
 
-	Session *Session
+	SendRequest chan MCPEPacket
 
 	loggedIn bool
 	spawned  bool
-	closed   bool
 }
 
 // NewPlayer creates new player struct.
@@ -56,17 +53,11 @@ func NewPlayer(session *Session) *Player {
 	p.EntityID = atomic.AddUint64(&lastEntityID, 1)
 	p.playerShown = make(map[uint64]struct{})
 
-	p.callbackChan = make(chan PlayerCallback, 128)
 	p.updateTicker = time.NewTicker(time.Millisecond * 500)
 
-	p.fastChunks = make(map[[2]int32]*Chunk)
-	p.fastChunkMutex = new(sync.Mutex)
-	p.chunkRadius = 16
-	p.chunkStop = make(chan struct{}, 1)
-	p.chunkRequest = make(chan chunkRequest, 256)
-	p.chunkNotify = make(chan ChunkDelivery, 16)
-
+	p.SendRequest = make(chan MCPEPacket, chanBufsize)
 	p.inventory = new(PlayerInventory)
+	go p.process()
 	return p
 }
 
@@ -79,12 +70,55 @@ func (p *Player) HandlePacket(buf *bytes.Buffer) {
 		return
 	}
 	var ok bool
-	var handle Handleable
-	if handle, ok = pk.(Handleable); !ok {
+	var handler Handleable
+	if handler, ok = pk.(Handleable); !ok {
 		return // There is no handler for the packet
 	}
-	pk.Read(buf)
-	if err := pk.Handle(p); err != nil {
+	handler.Read(buf)
+	if err := handler.Handle(p); err != nil {
 		log.Println("Error while handling packet:", err)
 	}
+}
+
+func (p *Player) process() {
+	for {
+		select {
+		case <-p.closed:
+			return
+		case pk := <-p.SendRequest:
+			p.Send(pk.Write())
+		}
+	}
+}
+
+// Disconnect kicks player from the server.
+// Arguments are dynamic. Player.Disconnect(ToSend, ToLog) will send ToSend string to client, and log ToLog to logger.
+// If you supply nothing, or "" for ToSend, it'll be set to default.
+// Similarly, if you supply "" or nothing for ToLog, it'll be same as ToSend.
+func (p *Player) Disconnect(opts ...string) {
+	var msg, log string
+	if len(opts) == 0 || opts[0] == "" {
+		msg = "Generic reason"
+	} else {
+		msg = opts[0]
+	}
+	if len(opts) < 2 || opts[1] == "" {
+		log = msg
+	} else {
+		log = opts[1]
+	}
+	pk := &Disconnect{
+		Message: msg,
+	}
+	p.Send(pk.Write())
+
+	p.Close(log)
+}
+
+// Send sends raw bytes buffer to client.
+func (p *Player) Send(buf *bytes.Buffer) {
+	ep := new(EncapsulatedPacket)
+	ep.Reliability = 2
+	ep.Buffer = buf
+	p.SendEncapsulated(ep)
 }

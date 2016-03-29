@@ -13,13 +13,11 @@ var blockList = make(map[string]time.Time)
 
 // Router handles packets from network, and manages sessions.
 type Router struct {
-	conn          *net.UDPConn
-	sendChan      chan Packet
-	recvChan      chan Packet
-	playerAdder   func(*net.UDPAddr) chan<- *bytes.Buffer
-	playerRemover func(*net.UDPAddr) error
-	closeNotify   chan *net.UDPAddr
-	recvBuf       []byte
+	conn        *net.UDPConn
+	sendChan    chan Packet
+	recvChan    chan Packet
+	closeNotify chan *net.UDPAddr
+	recvBuf     []byte
 
 	Sessions map[string]*Session
 	Owner    *Server
@@ -40,9 +38,7 @@ func CreateRouter(port uint16) (r *Router, err error) {
 }
 
 // GetSession returns session with given identifier if exists, or creates new one.
-func (r *Router) GetSession(address *net.UDPAddr, sendChannel chan Packet,
-	playerAdder func(*net.UDPAddr) chan<- *bytes.Buffer,
-	playerRemover func(*net.UDPAddr) error) *Session {
+func (r *Router) GetSession(address *net.UDPAddr, sendChannel chan Packet) *Session {
 	if s, ok := r.Sessions[address.String()]; ok {
 		return s
 	}
@@ -50,8 +46,6 @@ func (r *Router) GetSession(address *net.UDPAddr, sendChannel chan Packet,
 	sess := new(Session)
 	sess.Init(address)
 	sess.SendChan = sendChannel
-	sess.playerAdder = playerAdder
-	sess.playerRemover = playerRemover
 	sess.Server = r.Owner
 	go sess.work()
 	r.Sessions[address.String()] = sess
@@ -77,7 +71,7 @@ func (r *Router) work() {
 				r.conn.WriteToUDP([]byte("\x80\x00\x00\x00\x00\x00\x08\x15"), pk.Address)
 			} else {
 				delete(blockList, pk.Address.String())
-				r.GetSession(pk.Address, r.sendChan, r.playerAdder, r.playerRemover).ReceivedChan <- pk
+				r.GetSession(pk.Address, r.sendChan).ReceivedChan <- pk
 			}
 		default:
 			r.updateSession()

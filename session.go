@@ -8,8 +8,6 @@ import (
 	"runtime/debug"
 	"sync/atomic"
 	"time"
-
-	"github.com/L7-MCPE/lav7/util"
 )
 
 const windowSize = 2048
@@ -78,7 +76,7 @@ func (s *Session) Init(address *net.UDPAddr) {
 
 	s.ReceivedChan = make(chan Packet, chanBufsize)
 	s.EncapsulatedChan = make(chan *EncapsulatedPacket, chanBufsize)
-	s.closed = make(chan struct{}, 2)
+	s.closed = make(chan struct{})
 
 	s.updateTicker = time.NewTicker(time.Millisecond * 100)
 	s.windowUpdateTicker = time.NewTicker(time.Millisecond * 100)
@@ -404,13 +402,11 @@ func (s *Session) send(pk *bytes.Buffer) {
 // Close stops current session.
 func (s *Session) Close(reason string) {
 	select {
-	case <-s.closed:
-		s.closed <- struct{}{}
+	case <-s.closed: // Already closed
 		return
 	default:
 	}
-	s.closed <- struct{}{}
-	s.closed <- struct{}{}
+	close(s.closed)
 	data := &EncapsulatedPacket{Buffer: bytes.NewBuffer([]byte{0x15})}
 	s.sendEncapsulatedDirect(data)
 	log.Println("Session closed:", reason)
