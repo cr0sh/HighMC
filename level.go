@@ -38,7 +38,7 @@ type Level struct {
 	Name string
 
 	ChunkMap   map[[2]int32]*Chunk
-	ChunkMutex *sync.Mutex
+	ChunkMutex *sync.RWMutex
 	genTask    chan genRequest
 	Gen        func(int32, int32) *Chunk
 
@@ -56,7 +56,7 @@ type Level struct {
 func (lv *Level) Init(pv LevelProvider, numWorkers int) {
 	lv.LevelProvider = pv
 	lv.ChunkMap = make(map[[2]int32]*Chunk)
-	lv.ChunkMutex = new(sync.Mutex)
+	lv.ChunkMutex = new(sync.RWMutex)
 	// lv.Ticker = time.NewTicker(tickDuration)
 	lv.updateRequest = make(chan updateRequest, 1024)
 	lv.chunkRequest = make(chan chunkRequest, 0)
@@ -73,12 +73,6 @@ func (lv *Level) Init(pv LevelProvider, numWorkers int) {
 // Process is a worker function for channel requests and ticks,
 func (lv *Level) Process() {
 	var m map[[3]int32]struct{}
-	genResult := make(chan struct {
-		cx, cz int32
-		chunk  *Chunk
-		player *Player
-		done   *sync.WaitGroup
-	}, chanBufsize)
 	for {
 		select {
 		// case <-lv.Ticker.C:
@@ -86,35 +80,19 @@ func (lv *Level) Process() {
 		case req := <-lv.updateRequest:
 			m = make(map[[3]int32]struct{})
 			req.done <- append(req.records, lv.updateBlock(req.x, req.y, req.z, &m)...)
-		case res := <-genResult:
-			if res.chunk == nil {
-				log.Println("Warning: Chunk generation failed on", res.cx, res.cz)
-			}
-			res.player.SendCompressed(&FullChunkData{
-				ChunkX:  uint32(c.X),
-				ChunkZ:  uint32(c.Z),
-				Order:   OrderLayered,
-				Payload: chunk.FullChunkData(),
-			})
-			res.done.Done()
 		case req := <-lv.chunkRequest:
+			lv.ChunkMutex.RLock()
 			chunk := lv.GetChunk(req.cx, req.cz)
 			if chunk == nil {
 				lv.genTask <- genRequest{
 					cx:     req.cx,
 					cz:     req.cz,
 					player: req.player,
-					result: genResult,
 				}
+				lv.ChunkMutex.RUnlock()
 				continue
 			}
-			req.player.SendCompressed(&FullChunkData{
-				ChunkX:  uint32(c.X),
-				ChunkZ:  uint32(c.Z),
-				Order:   OrderLayered,
-				Payload: chunk.FullChunkData(),
-			})
-			req.done.Done()
+			lv.ChunkMutex.RUnlock()
 		case <-lv.Stop:
 			break
 		}
@@ -128,23 +106,16 @@ func (lv *Level) tick() {
 func (lv *Level) genWorker() {
 	for task := range lv.genTask {
 		c := lv.Gen(task.cx, task.cz)
-		res := struct {
-			cx, cz int32
-			chunk  *Chunk
-			player *Player
-			done   *sync.WaitGroup
-		}{
-			cx:     task.cx,
-			cz:     task.cz,
-			player: task.player,
-			done:   task.done,
+		res := chunkResult{
+			cx: task.cx,
+			cz: task.cz,
 		}
-		if _, ok := lv.ChunkMap[[2]int32{task.cx, task.cz}]; ok {
-			task.result <- res
+		if lv.ChunkExists(task.cx, task.cz) {
+			task.player.chunkResult <- res
 			continue
 		}
 		res.chunk = c
-		task.result <- res
+		task.player.chunkResult <- res
 	}
 }
 
@@ -178,33 +149,37 @@ func (lv *Level) OnUseItem(p *Player, x, y, z int32, face byte, item *Item) {
 			goto canceled
 		}
 		lv.Set(x, y, z, block)
-		/*
-			records := []BlockRecord{
-				{
-					X:     uint32(x),
-					Y:     byte(y),
-					Z:     uint32(z),
-					Block: block,
-					Flags: UpdateAllPriority,
-				},
-			}
-		*/
+		records := []BlockRecord{
+			{
+				X:     uint32(x),
+				Y:     byte(y),
+				Z:     uint32(z),
+				Block: block,
+				Flags: UpdateAllPriority,
+			},
+		}
+		go func(w <-chan []BlockRecord) {
+			/*
+				BroadcastPacket(&UpdateBlock{
+					BlockRecords: <-w,
+				})
+			*/
+		}(lv.requestUpdate(x, y, z, records))
+		return
 	}
 	// p.SendMessage(fmt.Sprintf("Block %d(%s) already exists on x:%d, y:%d, z: %d", f, ID(f), x, y, z))
 canceled:
-	/*
-		p.SendPacket(&UpdateBlock{
-			BlockRecords: []BlockRecord{
-				{
-					X:     uint32(x),
-					Y:     byte(y),
-					Z:     uint32(z),
-					Block: lv.Get(x, y, z),
-					Flags: UpdateAllPriority,
-				},
+	p.SendPacket(&UpdateBlock{
+		BlockRecords: []BlockRecord{
+			{
+				X:     uint32(x),
+				Y:     byte(y),
+				Z:     uint32(z),
+				Block: lv.Get(x, y, z),
+				Flags: UpdateAllPriority,
 			},
-		})
-	*/
+		},
+	})
 
 }
 
@@ -223,7 +198,7 @@ func (lv *Level) OnRemoveBlock(p *Player, x, y, z int32) {
 	go func(w <-chan []BlockRecord) {
 		/*
 			records := <-w
-			lv.Server.BroadcastPacket(&UpdateBlock{
+			BroadcastPacket(&UpdateBlock{
 				BlockRecords: records,
 			})
 		*/
@@ -243,13 +218,13 @@ func (lv *Level) placeHook(x, y, z int32, face byte, block *Block) bool { // sho
 
 func (lv *Level) requestUpdate(x, y, z int32, records []BlockRecord) <-chan []BlockRecord {
 	done := make(chan []BlockRecord, 1)
-	lv.UpdateRequest <- updateRequest{
+	/* lv.UpdateRequest <- updateRequest{
 		x:       x,
 		y:       y,
 		z:       z,
 		records: records,
 		done:    done,
-	}
+	} */
 	return done
 }
 
@@ -333,6 +308,8 @@ fallback:
 // SetChunk sets given chunk to chunk map.
 // Callers should lock ChunkMutex before call.
 func (lv *Level) SetChunk(cx, cz int32, c *Chunk) {
+	// lv.ChunkMutex.Lock()
+	// defer lv.ChunkMutex.Unlock()
 	if _, ok := lv.ChunkMap[[2]int32{cx, cz}]; ok {
 		panic("Tried to overwrite existing chunk!")
 	}
@@ -341,7 +318,7 @@ func (lv *Level) SetChunk(cx, cz int32, c *Chunk) {
 
 // CreateChunk generates chunk asynchronously.
 func (lv *Level) CreateChunk(cx, cz int32) <-chan struct{} {
-	done := make(chan struct{}, 1)
+	/* // TODO
 	go func(done chan<- struct{}) {
 		lv.genTask <- genRequest{
 			cx:   cx,
@@ -350,6 +327,8 @@ func (lv *Level) CreateChunk(cx, cz int32) <-chan struct{} {
 		}
 	}(done)
 	return done
+	*/
+	return nil
 }
 
 // UnloadChunk unloads chunk from memory.
@@ -369,6 +348,8 @@ func (lv *Level) UnloadChunk(cx, cz int32, save bool) error {
 
 // Clean unloads all 'unused' chunks from memory.
 func (lv *Level) Clean() (cnt int) {
+	lv.ChunkMutex.Lock()
+	defer lv.ChunkMutex.Unlock()
 	cnt = len(lv.CleanQueue)
 	for k := range lv.CleanQueue {
 		lv.UnloadChunk(k[0], k[1], true)
@@ -378,6 +359,8 @@ func (lv *Level) Clean() (cnt int) {
 
 // Save saves all loaded chunks on memory.
 func (lv *Level) Save() {
+	lv.ChunkMutex.Lock()
+	defer lv.ChunkMutex.Unlock()
 	if err := lv.SaveAll(lv.ChunkMap); err != nil {
 		log.Println("Error while saving level:", err)
 	}
@@ -385,18 +368,23 @@ func (lv *Level) Save() {
 
 // GetBlock returns block ID on given coordinates.
 func (lv *Level) GetBlock(x, y, z int32) byte {
+	lv.ChunkMutex.RLock()
 	c := lv.GetChunk(x>>4, z>>4)
+	lv.ChunkMutex.RUnlock()
 	if c == nil {
 		return 0
 	}
 	c.Mutex().RLock()
 	defer c.Mutex().RUnlock()
+
 	return c.GetBlock(byte(x&0xf), byte(y), byte(z&0xf))
 }
 
 // SetBlock sets block ID on given coordinates.
 func (lv *Level) SetBlock(x, y, z int32, b byte) {
+	lv.ChunkMutex.RLock()
 	c := lv.GetChunk(x>>4, z>>4)
+	lv.ChunkMutex.RUnlock()
 	if c == nil {
 		return
 	}
@@ -407,7 +395,9 @@ func (lv *Level) SetBlock(x, y, z int32, b byte) {
 
 // GetBlockMeta returns block meta on given coordinates.
 func (lv *Level) GetBlockMeta(x, y, z int32) byte {
+	lv.ChunkMutex.RLock()
 	c := lv.GetChunk(x>>4, z>>4)
+	lv.ChunkMutex.RUnlock()
 	if c == nil {
 		return 0
 	}
@@ -418,7 +408,9 @@ func (lv *Level) GetBlockMeta(x, y, z int32) byte {
 
 // SetBlockMeta sets block meta on given coordinates.
 func (lv *Level) SetBlockMeta(x, y, z int32, b byte) {
+	lv.ChunkMutex.RLock()
 	c := lv.GetChunk(x>>4, z>>4)
+	lv.ChunkMutex.RUnlock()
 	if c == nil {
 		return
 	}
@@ -430,7 +422,9 @@ func (lv *Level) SetBlockMeta(x, y, z int32, b byte) {
 // Get returns Block struct on given coordinates.
 // The struct will contain block ID/meta.
 func (lv *Level) Get(x, y, z int32) Block {
+	lv.ChunkMutex.RLock()
 	c := lv.GetChunk(x>>4, z>>4)
+	lv.ChunkMutex.RUnlock()
 	if c == nil {
 		return Block{}
 	}
@@ -444,7 +438,9 @@ func (lv *Level) Get(x, y, z int32) Block {
 
 // Set sets block to given Block struct on given coordinates.
 func (lv *Level) Set(x, y, z int32, block Block) {
+	lv.ChunkMutex.RLock()
 	c := lv.GetChunk(x>>4, z>>4)
+	lv.ChunkMutex.RUnlock()
 	if c == nil {
 		return
 	}

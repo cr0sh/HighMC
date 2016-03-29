@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/hex"
 	"log"
-	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -15,9 +14,9 @@ type PlayerCallback struct {
 	Call func(*Player)
 }
 
-type chunkRequest struct {
-	x, z int32
-	wg   *sync.WaitGroup
+type chunkResult struct {
+	cx, cz int32
+	chunk  *Chunk
 }
 
 // Player is a struct for handling/containing MCPE client specific things.
@@ -39,9 +38,10 @@ type Player struct {
 
 	inventory *PlayerInventory
 
-	SendCompressedRequest chan MCPEPacket
+	SendCompressedRequest chan []MCPEPacket
 
 	chunkUpdate *time.Ticker
+	chunkResult chan chunkResult
 
 	loggedIn bool
 	spawned  bool
@@ -86,13 +86,27 @@ func (p *Player) firstSpawn() {
 }
 
 func (p *Player) process() {
-	p.chunkUpdate = time.NewTicker(time.Milliseconds * 200)
+	p.chunkUpdate = time.NewTicker(time.Millisecond * 200)
+	p.chunkResult = make(chan chunkResult, chanBufsize)
+	// chunkReq := make(chan [2]int32, chanBufsize)
 	for {
 		select {
 		case <-p.closed:
 			return
-		case pks := <-p.CompressedSendRequest:
-			p.SendCompressed(pks)
+		case res := <-p.chunkResult:
+			if res.chunk == nil {
+				log.Println("Chunk gen on", res.cx, res.cz, "failed")
+				continue
+			}
+			// TODO: mark sent chunks
+			p.SendCompressed(&FullChunkData{
+				ChunkX:  uint32(res.cx),
+				ChunkZ:  uint32(res.cz),
+				Order:   OrderLayered,
+				Payload: res.chunk.FullChunkData(),
+			})
+		case pks := <-p.SendCompressedRequest:
+			p.SendCompressed(pks...)
 
 			// case <-p.chunkUpdate.C:
 			// 	    p.updateChunk()
