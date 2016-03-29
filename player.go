@@ -39,7 +39,9 @@ type Player struct {
 
 	inventory *PlayerInventory
 
-	SendRequest chan MCPEPacket
+	SendCompressedRequest chan MCPEPacket
+
+	chunkUpdate *time.Ticker
 
 	loggedIn bool
 	spawned  bool
@@ -55,9 +57,8 @@ func NewPlayer(session *Session) *Player {
 
 	p.updateTicker = time.NewTicker(time.Millisecond * 500)
 
-	p.SendRequest = make(chan MCPEPacket, chanBufsize)
+	p.SendCompressedRequest = make(chan []MCPEPacket, chanBufsize)
 	p.inventory = new(PlayerInventory)
-	go p.process()
 	return p
 }
 
@@ -80,15 +81,27 @@ func (p *Player) HandlePacket(buf *bytes.Buffer) {
 	}
 }
 
+func (p *Player) firstSpawn() {
+	// TODO
+}
+
 func (p *Player) process() {
+	p.chunkUpdate = time.NewTicker(time.Milliseconds * 200)
 	for {
 		select {
 		case <-p.closed:
 			return
-		case pk := <-p.SendRequest:
-			p.Send(pk.Write())
+		case pks := <-p.CompressedSendRequest:
+			p.SendCompressed(pks)
+
+			// case <-p.chunkUpdate.C:
+			// 	    p.updateChunk()
 		}
 	}
+}
+
+func (p *Player) updateChunk() {
+	// TODO
 }
 
 // Disconnect kicks player from the server.
@@ -107,12 +120,25 @@ func (p *Player) Disconnect(opts ...string) {
 	} else {
 		log = opts[1]
 	}
-	pk := &Disconnect{
+	p.SendPacket(&Disconnect{
 		Message: msg,
-	}
-	p.Send(pk.Write())
-
+	})
 	p.Close(log)
+}
+
+// SendCompressed sends packed BatchPacket with given packets.
+func (p *Player) SendCompressed(pks ...MCPEPacket) {
+	batch := &Batch{
+		Payloads: make([][]byte, len(pks)),
+	}
+	for i, pk := range pks {
+		batch.Payloads[i] = append([]byte{pk.Pid()}, pk.Write().Bytes()...)
+	}
+	p.SendPacket(batch)
+}
+
+func (p *Player) SendPacket(pk MCPEPacket) {
+	p.Send(pk.Write())
 }
 
 // Send sends raw bytes buffer to client.

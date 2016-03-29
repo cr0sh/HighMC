@@ -10,14 +10,26 @@ import (
 const tickDuration = time.Millisecond * 50
 
 type genRequest struct {
-	done   chan<- struct{}
 	cx, cz int32
+	player *Player
+	result chan<- struct {
+		cx, cz int32
+		chunk  *Chunk
+		player *Player
+	}
+	done *sync.WaitGroup
 }
 
 type updateRequest struct {
 	x, y, z int32
 	records []BlockRecord
 	done    chan<- []BlockRecord
+}
+
+type chunkRequest struct {
+	cx, cz int32
+	player *Player
+	done   *sync.WaitGroup
 }
 
 // Level is a struct for processing MCPE worlds.
@@ -32,7 +44,8 @@ type Level struct {
 
 	CleanQueue map[[2]int32]struct{}
 
-	UpdateRequest chan updateRequest
+	updateRequest chan updateRequest
+	chunkRequest  chan chunkRequest
 
 	Server *Server
 	Ticker *time.Ticker
@@ -45,7 +58,8 @@ func (lv *Level) Init(pv LevelProvider, numWorkers int) {
 	lv.ChunkMap = make(map[[2]int32]*Chunk)
 	lv.ChunkMutex = new(sync.Mutex)
 	// lv.Ticker = time.NewTicker(tickDuration)
-	lv.UpdateRequest = make(chan updateRequest, 1024)
+	lv.updateRequest = make(chan updateRequest, 1024)
+	lv.chunkRequest = make(chan chunkRequest, 0)
 	lv.Stop = make(chan struct{}, 1)
 	lv.genTask = make(chan genRequest, 512)
 	lv.CleanQueue = make(map[[2]int32]struct{})
@@ -56,16 +70,51 @@ func (lv *Level) Init(pv LevelProvider, numWorkers int) {
 	}
 }
 
-// Process fires tick periodically, and processes block update schedules.
+// Process is a worker function for channel requests and ticks,
 func (lv *Level) Process() {
 	var m map[[3]int32]struct{}
+	genResult := make(chan struct {
+		cx, cz int32
+		chunk  *Chunk
+		player *Player
+		done   *sync.WaitGroup
+	}, chanBufsize)
 	for {
 		select {
 		// case <-lv.Ticker.C:
 		// 	lv.tick()
-		case req := <-lv.UpdateRequest:
+		case req := <-lv.updateRequest:
 			m = make(map[[3]int32]struct{})
 			req.done <- append(req.records, lv.updateBlock(req.x, req.y, req.z, &m)...)
+		case res := <-genResult:
+			if res.chunk == nil {
+				log.Println("Warning: Chunk generation failed on", res.cx, res.cz)
+			}
+			res.player.SendCompressed(&FullChunkData{
+				ChunkX:  uint32(c.X),
+				ChunkZ:  uint32(c.Z),
+				Order:   OrderLayered,
+				Payload: chunk.FullChunkData(),
+			})
+			res.done.Done()
+		case req := <-lv.chunkRequest:
+			chunk := lv.GetChunk(req.cx, req.cz)
+			if chunk == nil {
+				lv.genTask <- genRequest{
+					cx:     req.cx,
+					cz:     req.cz,
+					player: req.player,
+					result: genResult,
+				}
+				continue
+			}
+			req.player.SendCompressed(&FullChunkData{
+				ChunkX:  uint32(c.X),
+				ChunkZ:  uint32(c.Z),
+				Order:   OrderLayered,
+				Payload: chunk.FullChunkData(),
+			})
+			req.done.Done()
 		case <-lv.Stop:
 			break
 		}
@@ -79,15 +128,23 @@ func (lv *Level) tick() {
 func (lv *Level) genWorker() {
 	for task := range lv.genTask {
 		c := lv.Gen(task.cx, task.cz)
-		lv.ChunkMutex.Lock()
+		res := struct {
+			cx, cz int32
+			chunk  *Chunk
+			player *Player
+			done   *sync.WaitGroup
+		}{
+			cx:     task.cx,
+			cz:     task.cz,
+			player: task.player,
+			done:   task.done,
+		}
 		if _, ok := lv.ChunkMap[[2]int32{task.cx, task.cz}]; ok {
-			lv.ChunkMutex.Unlock()
-			task.done <- struct{}{}
+			task.result <- res
 			continue
 		}
-		lv.SetChunk(task.cx, task.cz, c)
-		lv.ChunkMutex.Unlock()
-		task.done <- struct{}{}
+		res.chunk = c
+		task.result <- res
 	}
 }
 
@@ -235,9 +292,7 @@ func (lv *Level) updateBlock(x, y, z int32, updated *map[[3]int32]struct{}) []Bl
 
 // ChunkExists returns if the chunk is loaded on the given chunk coordinates.
 func (lv *Level) ChunkExists(cx, cz int32) bool {
-	lv.ChunkMutex.Lock()
 	_, ok := lv.ChunkMap[[2]int32{cx, cz}]
-	lv.ChunkMutex.Unlock()
 	return ok
 }
 
@@ -246,8 +301,6 @@ func (lv *Level) ChunkExists(cx, cz int32) bool {
 //
 // If Provider fails to load the chunk, this function will return nil.
 func (lv *Level) GetChunk(cx, cz int32) *Chunk {
-	lv.ChunkMutex.Lock()
-	defer lv.ChunkMutex.Unlock()
 	var err error
 	if c, ok := lv.ChunkMap[[2]int32{cx, cz}]; ok {
 		return c
@@ -280,8 +333,6 @@ fallback:
 // SetChunk sets given chunk to chunk map.
 // Callers should lock ChunkMutex before call.
 func (lv *Level) SetChunk(cx, cz int32, c *Chunk) {
-	// lv.ChunkMutex.Lock()
-	// defer lv.ChunkMutex.Unlock()
 	if _, ok := lv.ChunkMap[[2]int32{cx, cz}]; ok {
 		panic("Tried to overwrite existing chunk!")
 	}
@@ -318,8 +369,6 @@ func (lv *Level) UnloadChunk(cx, cz int32, save bool) error {
 
 // Clean unloads all 'unused' chunks from memory.
 func (lv *Level) Clean() (cnt int) {
-	lv.ChunkMutex.Lock()
-	defer lv.ChunkMutex.Unlock()
 	cnt = len(lv.CleanQueue)
 	for k := range lv.CleanQueue {
 		lv.UnloadChunk(k[0], k[1], true)
@@ -329,8 +378,6 @@ func (lv *Level) Clean() (cnt int) {
 
 // Save saves all loaded chunks on memory.
 func (lv *Level) Save() {
-	lv.ChunkMutex.Lock()
-	defer lv.ChunkMutex.Unlock()
 	if err := lv.SaveAll(lv.ChunkMap); err != nil {
 		log.Println("Error while saving level:", err)
 	}

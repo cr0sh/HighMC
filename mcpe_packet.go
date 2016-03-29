@@ -185,17 +185,46 @@ func (i Login) Write() *bytes.Buffer {
 // Handle implements Handleable interface.
 func (i Login) Handle(p *Player) (err error) {
 	p.Username = i.Username
+	ret := new(PlayStatus)
 	if i.Proto1 > MinecraftProtocol {
+		ret.Status = LoginFailedServer
+		p.SendPacket(ret)
 		p.Disconnect("Outdated server")
 		return
 	} else if i.Proto1 < MinecraftProtocol {
+		ret.Status = LoginFailedClient
+		p.SendPacket(ret)
 		p.Disconnect("Outdated client")
 		return
 	}
+	ret.Status = LoginSuccess
+	p.SendPacket(ret)
 	p.ID, p.UUID, p.Secret, p.EntityID, p.Skin, p.SkinName =
 		i.ClientID, i.RawUUID, i.ClientSecret, atomic.AddUint64(&lastEntityID, 1), i.Skin, i.SkinName
 	// Init pos, etc.
-	p.Server.RegisterPlayer(p)
+	if err := p.Server.RegisterPlayer(p); err != nil {
+		p.Disconnect("Authentication failure", err.Error())
+	}
+	// Auth success!
+	p.SendPacket(&StartGame{
+		Seed:      0xffffffff, // -1
+		Dimension: 0,
+		Generator: 1, // 0: old, 1: infinite, 2: flat
+		Gamemode:  1, // 0: Survival, 1: Creative
+		EntityID:  0, // Player eid set to 0
+		SpawnX:    0,
+		SpawnY:    uint32(60),
+		SpawnZ:    0,
+		X:         0,
+		Y:         60,
+		Z:         0,
+	})
+	p.loggedIn = true
+	p.inventory.Holder = p
+	p.inventory.Init()
+
+	go p.process()
+
 	return
 }
 
