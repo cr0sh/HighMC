@@ -32,6 +32,21 @@ func NewServer() *Server {
 	return s
 }
 
+func (s *Server) process() {
+	for {
+		select {
+		case <-s.close:
+			return
+		case req := <-s.registerRequest:
+			if _, ok := s.players[req.player.Address.String()]; ok {
+				req.ok <- "player exists with same address:port"
+				continue
+			}
+			s.players[req.player.Address.String()] = req.player
+		}
+	}
+}
+
 // RegisterPlayer attempts to register the player to server.
 func (s *Server) RegisterPlayer(p *Player) error {
 	ok := make(chan string, 1)
@@ -47,19 +62,4 @@ func (s *Server) RegisterPlayer(p *Player) error {
 		return fmt.Errorf(res)
 	}
 	return nil
-}
-
-func (s *Server) process() {
-	for {
-		select {
-		case <-s.close:
-			return
-		case req := <-s.registerRequest:
-			if _, ok := s.players[req.player.Address.String()]; ok {
-				req.ok <- "player exists with same address:port"
-				continue
-			}
-			s.players[req.player.Address.String()] = req.player
-		}
-	}
 }

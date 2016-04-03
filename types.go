@@ -23,9 +23,14 @@ func (b Block) Item() Item {
 	}
 }
 
+// ChunkPos is a type for identifying chunks by x-z coordinate.
+type ChunkPos struct {
+	X, Z int32
+}
+
 // ChunkDelivery is a type for passing full chunk data to players.
 type ChunkDelivery struct {
-	X, Z  int32
+	ChunkPos
 	Chunk *Chunk
 }
 
@@ -41,8 +46,7 @@ type Chunk struct {
 	HeightMap    [16 * 16]byte
 	BiomeData    [16 * 16 * 4]byte // Uints
 
-	Refs    uint64
-	RWMutex *sync.RWMutex
+	Refs uint64
 }
 
 // FallbackChunk is a chunk to be returned if level provider fails to load chunk from file.
