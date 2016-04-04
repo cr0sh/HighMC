@@ -20,7 +20,7 @@ func main() {
 	server := highmc.NewServer()
 	router.Owner = server
 	server.Router = router
-	go server.process()
+	server.Start()
 	log.Println("Server running on :19132")
 	for {
 		fmt.Scanln()

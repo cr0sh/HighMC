@@ -32,6 +32,11 @@ func NewServer() *Server {
 	return s
 }
 
+// Start starts the server.
+func (s *Server) Start() {
+	go s.process()
+}
+
 func (s *Server) process() {
 	for {
 		select {

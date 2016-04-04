@@ -2,6 +2,7 @@ package highmc
 
 import (
 	"bytes"
+	"fmt"
 	"log"
 	"sync/atomic"
 )
@@ -276,6 +277,12 @@ func (i *Disconnect) Write() *bytes.Buffer {
 	return buf
 }
 
+// Handle implements Handleable interface.
+func (i Disconnect) Handle(p *Player) (err error) {
+	p.Disconnect("Client disconnect")
+	return
+}
+
 // Batch needs to be documented.
 type Batch struct {
 	Payloads [][]byte
@@ -287,12 +294,11 @@ func (i Batch) Pid() byte { return BatchHead } // 0x92
 // Read implements MCPEPacket interface.
 func (i *Batch) Read(buf *bytes.Buffer) {
 	i.Payloads = make([][]byte, 0)
-	payload, err := DecodeDeflate(buf.Next(int(ReadInt(buf))))
+	b, err := DecodeDeflate(buf.Next(int(ReadInt(buf))))
 	if err != nil {
 		log.Println("Error while decompressing Batch payload:", err)
 		return
 	}
-	b := bytes.NewBuffer(payload)
 	for b.Len() > 4 {
 		size := ReadInt(b)
 		pk := b.Next(int(size))
@@ -310,10 +316,24 @@ func (i Batch) Write() *bytes.Buffer {
 		WriteInt(b, uint32(len(pk)))
 		Write(b, pk)
 	}
-	payload := EncodeDeflate(b.Bytes())
+	payload := EncodeDeflate(b)
 	buf := new(bytes.Buffer)
 	BatchWrite(buf, uint32(len(payload)), payload)
 	return buf
+}
+
+// Handle implements Handleable interface.
+func (i Batch) Handle(p *Player) (err error) {
+	var errs string
+	for i, payload := range i.Payloads {
+		if err := p.HandlePacket(bytes.NewBuffer(payload)); err != nil {
+			errs += fmt.Sprintf("BatchPacket payload #%d: %v\n", i+1, err)
+		}
+	}
+	if errs != "" {
+		return fmt.Errorf(errs[:len(errs)-1])
+	}
+	return
 }
 
 // Packet-specific constants

@@ -4,9 +4,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"sync"
 
-	"github.com/minero/minero-go/proto/nbt"
+	"github.com/minero/minero/proto/nbt"
 )
 
 // Block contains block data for each level positions
@@ -26,6 +25,14 @@ func (b Block) Item() Item {
 // ChunkPos is a type for identifying chunks by x-z coordinate.
 type ChunkPos struct {
 	X, Z int32
+}
+
+// GetChunkPos extracts ChunkPos from BlockPos.
+func GetChunkPos(p BlockPos) ChunkPos {
+	return ChunkPos{
+		X: p.X >> 4,
+		Z: p.Z >> 4,
+	}
 }
 
 // ChunkDelivery is a type for passing full chunk data to players.
@@ -53,10 +60,7 @@ type Chunk struct {
 var FallbackChunk = *new(Chunk)
 
 // CopyFrom gets everything from given chunk, and writes to the chunk instance.
-// Mutex is not shared with given chunk. You don't need to RLock the copying chunk.
 func (c *Chunk) CopyFrom(chunk Chunk) {
-	chunk.Mutex().RLock()
-	defer chunk.Mutex().RUnlock()
 	copy(c.BlockData[:], chunk.BlockData[:])
 	copy(c.MetaData[:], chunk.MetaData[:])
 	copy(c.LightData[:], chunk.LightData[:])
@@ -183,14 +187,6 @@ func (c *Chunk) getHeight(x, z byte) {
 			return
 		}
 	}
-}
-
-// Mutex returns chunk's RW mutex.
-func (c *Chunk) Mutex() *sync.RWMutex {
-	if c.RWMutex == nil {
-		c.RWMutex = new(sync.RWMutex)
-	}
-	return c.RWMutex
 }
 
 // FullChunkData returns full chunk payload for FullChunkDataPacket. Order is layered.

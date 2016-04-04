@@ -1,5 +1,7 @@
 package highmc
 
+// FIXME
+/*
 type blockUpdateHandler func(int32, int32, int32, Block, *Level) []BlockRecord
 
 var blockHandlerMap = map[byte]blockUpdateHandler{
@@ -64,3 +66,4 @@ func NeedUpdate(ID byte) bool {
 	_, ok := blockHandlerMap[ID]
 	return ok
 }
+*/

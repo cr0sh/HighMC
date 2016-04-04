@@ -63,22 +63,24 @@ func NewPlayer(session *Session) *Player {
 }
 
 // HandlePacket handles MCPE data packet.
-func (p *Player) HandlePacket(buf *bytes.Buffer) {
+func (p *Player) HandlePacket(buf *bytes.Buffer) error {
 	head := ReadByte(buf)
 	pk := GetMCPEPacket(head)
 	if pk == nil {
 		log.Println("[!] Unexpected packet head:", hex.EncodeToString([]byte{head}))
-		return
+		return nil
 	}
 	var ok bool
 	var handler Handleable
 	if handler, ok = pk.(Handleable); !ok {
-		return // There is no handler for the packet
+		return nil // There is no handler for the packet
 	}
 	handler.Read(buf)
 	if err := handler.Handle(p); err != nil {
 		log.Println("Error while handling packet:", err)
+		return err
 	}
+	return nil
 }
 
 func (p *Player) firstSpawn() {

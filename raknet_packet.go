@@ -353,6 +353,7 @@ func (pk *ClientConnect) Handle(session *Session) {
 		return
 	}
 	buf := new(bytes.Buffer)
+	log.Println("Client handshake")
 	p := &ServerHandshake{
 		Address:         session.Address,
 		SystemAddresses: AddressTemplate,
