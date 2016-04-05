@@ -176,7 +176,7 @@ func (i *Login) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i Login) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, i.Username, i.Proto1, i.Proto2,
 		i.ClientID, i.RawUUID[:], i.ServerAddress,
 		i.ClientSecret, i.SkinName, string(i.Skin))
@@ -199,6 +199,7 @@ func (i Login) Handle(p *Player) (err error) {
 		return
 	}
 	ret.Status = LoginSuccess
+	log.Println("PlayStatus LoginSuccess")
 	p.SendPacket(ret)
 	p.ID, p.UUID, p.Secret, p.EntityID, p.Skin, p.SkinName =
 		i.ClientID, i.RawUUID, i.ClientSecret, atomic.AddUint64(&lastEntityID, 1), i.Skin, i.SkinName
@@ -206,6 +207,7 @@ func (i Login) Handle(p *Player) (err error) {
 	if err := p.Server.RegisterPlayer(p); err != nil {
 		p.Disconnect("Authentication failure", err.Error())
 	}
+	log.Println("Autentication succeeded")
 	// Auth success!
 	p.SendPacket(&StartGame{
 		Seed:      0xffffffff, // -1
@@ -225,6 +227,8 @@ func (i Login) Handle(p *Player) (err error) {
 	p.inventory.Init()
 
 	go p.process()
+	p.firstSpawn()
+	// TODO
 
 	return
 }
@@ -252,7 +256,7 @@ func (i *PlayStatus) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i *PlayStatus) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.Status)
 	return buf
 }
@@ -272,7 +276,7 @@ func (i *Disconnect) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i *Disconnect) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteString(buf, i.Message)
 	return buf
 }
@@ -317,7 +321,7 @@ func (i Batch) Write() *bytes.Buffer {
 		Write(b, pk)
 	}
 	payload := EncodeDeflate(b)
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, uint32(len(payload)), payload)
 	return buf
 }
@@ -378,7 +382,7 @@ func (i *Text) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i Text) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.TextType)
 	switch i.TextType {
 	case TextTypePopup, TextTypeChat:
@@ -422,7 +426,7 @@ func (i *SetTime) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i SetTime) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, uint32((i.Time*19200)/FullTime))
 	WriteBool(buf, i.Started)
 	return buf
@@ -452,7 +456,7 @@ func (i *StartGame) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i StartGame) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, i.Seed, i.Dimension, i.Generator,
 		i.Gamemode, i.EntityID, i.SpawnX,
 		i.SpawnY, i.SpawnZ, i.X,
@@ -487,7 +491,7 @@ func (i *AddPlayer) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i AddPlayer) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, i.RawUUID[:], i.Username, i.EntityID,
 		i.X, i.Y, i.Z,
 		i.SpeedX, i.SpeedY, i.SpeedZ,
@@ -513,7 +517,7 @@ func (i *RemovePlayer) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i RemovePlayer) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	buf.Write(i.RawUUID[:])
 	return buf
@@ -546,7 +550,7 @@ func (i *AddEntity) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i AddEntity) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, i.EntityID, i.Type,
 		i.X, i.Y, i.Z,
 		i.SpeedX, i.SpeedY, i.SpeedZ,
@@ -571,7 +575,7 @@ func (i *RemoveEntity) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i RemoveEntity) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	return buf
 }
@@ -606,7 +610,7 @@ func (i *AddItemEntity) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i AddItemEntity) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	buf.Write(i.Item.Write())
 	WriteFloat(buf, i.X)
@@ -635,7 +639,7 @@ func (i *TakeItemEntity) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i TakeItemEntity) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.Target)
 	WriteLong(buf, i.EntityID)
 	return buf
@@ -668,7 +672,7 @@ func (i MoveEntity) Write() *bytes.Buffer {
 	if len(i.EntityIDs) != len(i.EntityPos) {
 		panic("Entity data slice length mismatch")
 	}
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, uint32(len(i.EntityIDs)))
 	for k, e := range i.EntityIDs {
 		WriteLong(buf, e)
@@ -717,7 +721,7 @@ func (i *MovePlayer) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i MovePlayer) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	WriteFloat(buf, i.X)
 	WriteFloat(buf, i.Y)
@@ -750,7 +754,7 @@ func (i *RemoveBlock) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i RemoveBlock) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	WriteInt(buf, i.X)
 	WriteInt(buf, i.Z)
@@ -809,7 +813,7 @@ func (i *UpdateBlock) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i UpdateBlock) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, uint32(len(i.BlockRecords)))
 	for _, record := range i.BlockRecords {
 		BatchWrite(buf, record.X, record.Z, record.Y, record.Block.ID, (record.Flags<<4 | record.Block.Meta))
@@ -842,7 +846,7 @@ func (i *AddPainting) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i AddPainting) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	WriteInt(buf, i.X)
 	WriteInt(buf, i.Y)
@@ -873,7 +877,7 @@ func (i *Explode) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i Explode) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, i.X, i.Y, i.Z, i.Radius)
 	WriteInt(buf, uint32(len(i.Records)))
 	for _, r := range i.Records {
@@ -937,7 +941,7 @@ func (i *LevelEvent) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i LevelEvent) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteShort(buf, i.EventID)
 	WriteFloat(buf, i.X)
 	WriteFloat(buf, i.Y)
@@ -969,7 +973,7 @@ func (i *BlockEvent) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i BlockEvent) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.X)
 	WriteInt(buf, i.Y)
 	WriteInt(buf, i.Z)
@@ -1015,7 +1019,7 @@ func (i *EntityEvent) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i EntityEvent) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	WriteByte(buf, i.Event)
 	return buf
@@ -1053,7 +1057,7 @@ func (i *MobEffect) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i MobEffect) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	WriteByte(buf, i.EventID)
 	WriteByte(buf, i.EffectID)
@@ -1099,7 +1103,7 @@ func (i *MobEquipment) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i MobEquipment) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	buf.Write(i.Item.Write())
 	WriteByte(buf, i.Slot)
@@ -1127,7 +1131,7 @@ func (i *MobArmorEquipment) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i MobArmorEquipment) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	for j := range i.Slots {
 		buf.Write(i.Slots[j].Write())
@@ -1152,7 +1156,7 @@ func (i *Interact) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i Interact) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.Action)
 	WriteLong(buf, i.Target)
 	return buf
@@ -1181,7 +1185,7 @@ func (i *UseItem) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i UseItem) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, i.X, i.Y, i.Z,
 		i.Face, i.FloatX, i.FloatY, i.FloatZ,
 		i.PosX, i.PosY, i.PosZ, i.Item.Write())
@@ -1231,7 +1235,7 @@ func (i *PlayerAction) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i PlayerAction) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.EntityID)
 	WriteInt(buf, i.Action)
 	WriteInt(buf, i.X)
@@ -1256,7 +1260,7 @@ func (i *HurtArmor) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i HurtArmor) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.Health)
 	return buf
 }
@@ -1302,7 +1306,7 @@ func (i SetEntityMotion) Write() *bytes.Buffer {
 	if len(i.EntityIDs) != len(i.EntityMotion) {
 		panic("Entity data slice length mismatch")
 	}
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, uint32(len(i.EntityIDs)))
 	for k, e := range i.EntityIDs {
 		WriteLong(buf, e)
@@ -1332,7 +1336,7 @@ func (i *SetEntityLink) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i SetEntityLink) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteLong(buf, i.From)
 	WriteLong(buf, i.To)
 	WriteByte(buf, i.Type)
@@ -1354,7 +1358,7 @@ func (i *SetHealth) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i SetHealth) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.Health)
 	return buf
 }
@@ -1378,7 +1382,7 @@ func (i *SetSpawnPosition) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i SetSpawnPosition) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.X)
 	WriteInt(buf, i.Y)
 	WriteInt(buf, i.Z)
@@ -1402,7 +1406,7 @@ func (i *Animate) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i Animate) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.Action)
 	WriteLong(buf, i.EntityID)
 	return buf
@@ -1427,7 +1431,7 @@ func (i *Respawn) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i Respawn) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteFloat(buf, i.X)
 	WriteFloat(buf, i.Y)
 	WriteFloat(buf, i.Z)
@@ -1452,7 +1456,7 @@ func (i *DropItem) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i DropItem) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, i.Type, i.Item.Write())
 	return buf
 }
@@ -1482,7 +1486,7 @@ func (i *ContainerOpen) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i ContainerOpen) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.WindowID)
 	WriteByte(buf, i.Type)
 	WriteShort(buf, i.Slots)
@@ -1507,7 +1511,7 @@ func (i *ContainerClose) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i ContainerClose) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.WindowID)
 	return buf
 }
@@ -1534,7 +1538,7 @@ func (i *ContainerSetSlot) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i ContainerSetSlot) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.Windowid)
 	WriteShort(buf, i.Slot)
 	WriteShort(buf, i.HotbarSlot)
@@ -1561,7 +1565,7 @@ func (i *ContainerSetData) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i ContainerSetData) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.WindowID)
 	WriteShort(buf, i.Property)
 	WriteShort(buf, i.Value)
@@ -1608,7 +1612,7 @@ func (i *ContainerSetContent) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i ContainerSetContent) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.WindowID)
 	WriteShort(buf, uint16(len(i.Slots)))
 	for _, slot := range i.Slots {
@@ -1663,7 +1667,7 @@ func (i *AdventureSettings) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i AdventureSettings) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.Flags)
 	return buf
 }
@@ -1689,7 +1693,7 @@ func (i *BlockEntityData) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i BlockEntityData) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.X)
 	WriteInt(buf, i.Y)
 	WriteInt(buf, i.Z)
@@ -1721,7 +1725,7 @@ func (i *FullChunkData) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i FullChunkData) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	BatchWrite(buf, i.ChunkX, i.ChunkZ, i.Order,
 		uint32(len(i.Payload)), i.Payload)
 	return buf
@@ -1742,7 +1746,7 @@ func (i *SetDifficulty) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i SetDifficulty) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.Difficulty)
 	return buf
 }
@@ -1762,7 +1766,7 @@ func (i *SetPlayerGametype) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i SetPlayerGametype) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.Gamemode)
 	return buf
 }
@@ -1812,7 +1816,7 @@ func (i *PlayerList) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i PlayerList) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteByte(buf, i.Type)
 	WriteInt(buf, uint32(len(i.PlayerEntries)))
 	for _, entry := range i.PlayerEntries {
@@ -1844,7 +1848,7 @@ func (i *RequestChunkRadius) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i RequestChunkRadius) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.Radius)
 	return buf
 }
@@ -1864,7 +1868,7 @@ func (i *ChunkRadiusUpdate) Read(buf *bytes.Buffer) {
 
 // Write implements MCPEPacket interface.
 func (i ChunkRadiusUpdate) Write() *bytes.Buffer {
-	buf := new(bytes.Buffer)
+	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.Radius)
 	return buf
 }

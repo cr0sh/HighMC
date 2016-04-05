@@ -47,8 +47,8 @@ type Session struct {
 	timeout            *time.Timer
 	mtuSize            uint32
 
-	ackQueue  map[uint32]bool
-	nackQueue map[uint32]bool
+	ackQueue  map[uint32]struct{}
+	nackQueue map[uint32]struct{}
 	recovery  map[uint32]*DataPacket
 
 	packetWindow   map[uint32]bool
@@ -76,14 +76,15 @@ func (s *Session) Init(address *net.UDPAddr) {
 
 	s.ReceivedChan = make(chan Packet, chanBufsize)
 	s.EncapsulatedChan = make(chan *EncapsulatedPacket, chanBufsize)
+	s.AckChan = make(chan ackUpdate, chanBufsize)
 	s.closed = make(chan struct{})
 
 	s.updateTicker = time.NewTicker(time.Millisecond * 100)
 	s.windowUpdateTicker = time.NewTicker(time.Millisecond * 100)
 	s.timeout = time.NewTimer(time.Millisecond * 1500)
 
-	s.ackQueue = make(map[uint32]bool)
-	s.nackQueue = make(map[uint32]bool)
+	s.ackQueue = make(map[uint32]struct{})
+	s.nackQueue = make(map[uint32]struct{})
 	s.recovery = make(map[uint32]*DataPacket)
 
 	s.seqNumber = 1<<32 - 1
@@ -105,6 +106,7 @@ func (s *Session) work() {
 		case <-s.closed:
 			s.updateTicker.Stop()
 			s.timeout.Stop()
+			return
 		default:
 		}
 		select {
@@ -172,7 +174,7 @@ func (s *Session) update() {
 		b := bytes.NewBuffer([]byte{0xc0})
 		Write(b, buf.Bytes())
 		s.send(b)
-		s.ackQueue = make(map[uint32]bool)
+		s.ackQueue = make(map[uint32]struct{})
 	}
 	if len(s.nackQueue) > 0 {
 		nacks := make([]uint32, len(s.nackQueue))
@@ -185,7 +187,7 @@ func (s *Session) update() {
 		b := bytes.NewBuffer([]byte{0xa0})
 		Write(b, buf.Bytes())
 		s.send(b)
-		s.nackQueue = make(map[uint32]bool)
+		s.nackQueue = make(map[uint32]struct{})
 	}
 	for seq, pk := range s.recovery {
 		if pk.SendTime.Add(RecoveryTimeout).Before(time.Now()) {
@@ -224,9 +226,13 @@ func (s *Session) handleAckUpdate(u ackUpdate) {
 		}
 	} else {
 		if u.nack {
-
+			for _, seq := range u.seqs {
+				s.nackQueue[seq] = struct{}{}
+			}
 		} else {
-
+			for _, seq := range u.seqs {
+				s.ackQueue[seq] = struct{}{}
+			}
 		}
 	}
 }
@@ -322,7 +328,7 @@ func (s *Session) handleEncapsulated(ep *EncapsulatedPacket) {
 	head := ReadByte(ep.Buffer)
 
 	if s.Status > 2 && head == 0x8e {
-		// s.Player.HandlePacket(ep.Buffer) // FIXME
+		s.Player.HandlePacket(ep.Buffer)
 	}
 
 	if handler := GetDataPacket(head); handler != nil {

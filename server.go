@@ -23,6 +23,7 @@ func NewServer() *Server {
 	s.Levels = map[string]*Level{
 		defaultLvl: {Name: "dummy", Server: s},
 	}
+	s.players = make(map[string]*Player)
 	s.callbackRequest = make(chan func(*Player), chanBufsize)
 	s.registerRequest = make(chan struct {
 		player *Player
@@ -48,6 +49,7 @@ func (s *Server) process() {
 				continue
 			}
 			s.players[req.player.Address.String()] = req.player
+			req.ok <- ""
 		}
 	}
 }

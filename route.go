@@ -2,6 +2,8 @@ package highmc
 
 import (
 	"bytes"
+	"encoding/hex"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -47,6 +49,7 @@ func (r *Router) GetSession(address *net.UDPAddr, sendChannel chan Packet) *Sess
 	sess.Init(address)
 	sess.SendChan = sendChannel
 	sess.Server = r.Owner
+	go sess.sendAsync()
 	go sess.work()
 	r.Sessions[address.String()] = sess
 	return sess

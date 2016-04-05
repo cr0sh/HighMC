@@ -3,6 +3,7 @@ package highmc
 import (
 	"bytes"
 	"encoding/hex"
+	"io"
 	"log"
 	"sync/atomic"
 	"time"
@@ -84,7 +85,32 @@ func (p *Player) HandlePacket(buf *bytes.Buffer) error {
 }
 
 func (p *Player) firstSpawn() {
-	// TODO
+	chunk := new(Chunk)
+	for x := byte(0); x < byte(16); x++ {
+		for z := byte(0); z < byte(16); z++ {
+			for y := byte(0); y < byte(56); y++ {
+				chunk.SetBlock(x, y, z, Dirt.Block())
+			}
+			chunk.SetBlock(x, 56, z, Grass.Block())
+			chunk.SetBiomeColor(x, z, 20, 128, 10)
+		}
+	}
+	payload := chunk.FullChunkData()
+	radius := int32(3)
+	for cx := int32(0) - radius; cx <= radius; cx++ {
+		for cz := int32(0) - radius; cz <= radius; cz++ {
+			p.SendCompressed(&FullChunkData{
+				ChunkX:  uint32(cx),
+				ChunkZ:  uint32(cz),
+				Order:   OrderLayered,
+				Payload: payload,
+			})
+		}
+	}
+	log.Println("PlayStatus PlayerSpawn")
+	p.SendPacket(&PlayStatus{
+		Status: PlayerSpawn,
+	})
 }
 
 func (p *Player) process() {
@@ -161,6 +187,7 @@ func (p *Player) SendPacket(pk MCPEPacket) {
 func (p *Player) Send(buf *bytes.Buffer) {
 	ep := new(EncapsulatedPacket)
 	ep.Reliability = 2
-	ep.Buffer = buf
+	ep.Buffer = bytes.NewBuffer([]byte{0x8e})
+	io.Copy(ep.Buffer, buf)
 	p.SendEncapsulated(ep)
 }
