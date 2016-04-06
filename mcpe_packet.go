@@ -216,10 +216,10 @@ func (i Login) Handle(p *Player) (err error) {
 		Gamemode:  1, // 0: Survival, 1: Creative
 		EntityID:  0, // Player eid set to 0
 		SpawnX:    0,
-		SpawnY:    uint32(60),
+		SpawnY:    uint32(80),
 		SpawnZ:    0,
 		X:         0,
-		Y:         60,
+		Y:         80,
 		Z:         0,
 	})
 	p.loggedIn = true

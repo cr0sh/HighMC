@@ -2,8 +2,6 @@ package highmc
 
 import (
 	"bytes"
-	"encoding/hex"
-	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -67,8 +65,7 @@ func (r *Router) work() {
 	for {
 		select {
 		case s := <-r.closeNotify:
-			delete(r.Sessions, s.String())
-			blockList[s.String()] = time.Now().Add(time.Second + time.Millisecond*750)
+			r.closeSession(s)
 		case pk := <-r.recvChan:
 			if blockList[pk.Address.String()].After(time.Now()) {
 				r.conn.WriteToUDP([]byte("\x80\x00\x00\x00\x00\x00\x08\x15"), pk.Address)
@@ -122,10 +119,15 @@ func (r *Router) updateSession() {
 	for _, sess := range r.Sessions {
 		select {
 		case <-sess.closed:
-			r.closeNotify <- sess.Address
+			r.closeSession(sess.Address)
 		default:
 		}
 	}
+}
+
+func (r *Router) closeSession(addr *net.UDPAddr) {
+	delete(r.Sessions, addr.String())
+	blockList[addr.String()] = time.Now().Add(time.Second + time.Millisecond*750)
 }
 
 func (r *Router) sendAsync() {

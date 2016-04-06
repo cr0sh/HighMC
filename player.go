@@ -96,7 +96,7 @@ func (p *Player) firstSpawn() {
 		}
 	}
 	payload := chunk.FullChunkData()
-	radius := int32(3)
+	radius := int32(5)
 	for cx := int32(0) - radius; cx <= radius; cx++ {
 		for cz := int32(0) - radius; cz <= radius; cz++ {
 			p.SendCompressed(&FullChunkData{
@@ -107,10 +107,10 @@ func (p *Player) firstSpawn() {
 			})
 		}
 	}
-	log.Println("PlayStatus PlayerSpawn")
 	p.SendPacket(&PlayStatus{
 		Status: PlayerSpawn,
 	})
+	log.Println("PlayStatus PlayerSpawn")
 }
 
 func (p *Player) process() {
