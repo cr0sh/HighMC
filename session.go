@@ -122,7 +122,7 @@ func (s *Session) work() {
 				break
 			}
 			p := &Ping{PingID: uint64(rand.Uint32())<<32 | uint64(rand.Uint32())}
-			buf := new(bytes.Buffer)
+			buf := Pool.NewBuffer(nil)
 			p.Write(buf)
 			s.sendEncapsulatedDirect(&EncapsulatedPacket{Buffer: buf})
 			s.pingTries++
@@ -170,7 +170,7 @@ func (s *Session) update() {
 			i++
 		}
 		buf := EncodeAck(acks)
-		b := bytes.NewBuffer([]byte{0xc0})
+		b := Pool.NewBuffer([]byte{0xc0})
 		Write(b, buf.Bytes())
 		s.send(b)
 		s.ackQueue = make(map[uint32]struct{})
@@ -183,7 +183,7 @@ func (s *Session) update() {
 			i++
 		}
 		buf := EncodeAck(nacks)
-		b := bytes.NewBuffer([]byte{0xa0})
+		b := Pool.NewBuffer([]byte{0xa0})
 		Write(b, buf.Bytes())
 		s.send(b)
 		s.nackQueue = make(map[uint32]struct{})
@@ -191,6 +191,7 @@ func (s *Session) update() {
 	for seq, pk := range s.recovery {
 		if pk.SendTime.Add(RecoveryTimeout).Before(time.Now()) {
 			s.send(pk.Buffer)
+			Pool.Reset(pk.Buffer)
 			delete(s.recovery, seq)
 		} else {
 			break
@@ -308,7 +309,7 @@ func (s *Session) joinSplits(ep *EncapsulatedPacket) {
 	}
 	if len(tab) == int(ep.SplitCount) {
 		sep := new(EncapsulatedPacket)
-		sep.Buffer = new(bytes.Buffer)
+		sep.Buffer = Pool.NewBuffer(nil)
 		for i := uint32(0); i < ep.SplitCount; i++ {
 			sep.Write(tab[i])
 		}
@@ -370,7 +371,7 @@ func (s *Session) SendEncapsulated(ep *EncapsulatedPacket) {
 			sp.SplitCount = splitCount
 			sp.Reliability = ep.Reliability
 			sp.SplitIndex = splitIndex
-			sp.Buffer = bytes.NewBuffer(buf)
+			sp.Buffer = Pool.NewBuffer(buf)
 			sp.MessageIndex = s.messageIndex
 			s.messageIndex++
 			if sp.Reliability == 3 {
@@ -407,7 +408,7 @@ func (s *Session) Close(reason string) {
 	default:
 	}
 	close(s.closed)
-	data := &EncapsulatedPacket{Buffer: bytes.NewBuffer([]byte{0x15})}
+	data := &EncapsulatedPacket{Buffer: Pool.NewBuffer([]byte{0x15})}
 	s.sendEncapsulatedDirect(data)
 	log.Println("Session closed:", reason)
 }

@@ -85,6 +85,7 @@ func (p *Player) HandlePacket(buf *bytes.Buffer) error {
 		log.Println("Error while handling packet:", err)
 		return err
 	}
+	Pool.Recycle(buf)
 	return nil
 }
 
@@ -199,7 +200,7 @@ func (p *Player) SendPacket(pk MCPEPacket) {
 func (p *Player) Send(buf *bytes.Buffer) {
 	ep := new(EncapsulatedPacket)
 	ep.Reliability = 2
-	ep.Buffer = bytes.NewBuffer([]byte{0x8e})
+	ep.Buffer = Pool.NewBuffer([]byte{0x8e})
 	io.Copy(ep.Buffer, buf)
 	p.SendEncapsulated(ep)
 }

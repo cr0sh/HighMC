@@ -37,11 +37,11 @@ func Safe(panicFunc func()) error {
 
 // DecodeDeflate returns decompressed data of given byte slice.
 func DecodeDeflate(b []byte) (*bytes.Buffer, error) {
-	r, err := zlib.NewReader(bytes.NewBuffer(b))
+	r, err := zlib.NewReader(Pool.NewBuffer(b))
 	if err != nil {
 		return nil, err
 	}
-	output := new(bytes.Buffer)
+	output := Pool.NewBuffer(nil)
 	io.Copy(output, r)
 	r.Close()
 	return output, nil
@@ -49,7 +49,7 @@ func DecodeDeflate(b []byte) (*bytes.Buffer, error) {
 
 // EncodeDeflate returns compressed data of given byte slice.
 func EncodeDeflate(b *bytes.Buffer) []byte {
-	o := new(bytes.Buffer)
+	o := Pool.NewBuffer(nil)
 	w := zlib.NewWriter(o)
 	io.Copy(w, b)
 	w.Close()

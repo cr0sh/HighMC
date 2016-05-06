@@ -14,7 +14,7 @@ type Packet struct {
 
 // NewPacket creates new packet with given packet id.
 func NewPacket(pid byte) Packet {
-	return Packet{bytes.NewBuffer([]byte{pid}), new(net.UDPAddr)}
+	return Packet{Pool.NewBuffer([]byte{pid}), new(net.UDPAddr)}
 }
 
 // EncapsulatedPacket is a struct, containing more values for decoding/encoding encapsualted packets.
@@ -60,7 +60,8 @@ func NewEncapsulated(buf *bytes.Buffer) (ep *EncapsulatedPacket) {
 	if err != nil {
 		panic(err.Error())
 	}
-	ep.Buffer = bytes.NewBuffer(b)
+	ep.Buffer = Pool.NewBuffer(b)
+	Pool.Recycle(buf)
 	return
 }
 
@@ -88,7 +89,7 @@ func (ep *EncapsulatedPacket) TotalLen() int {
 
 // Bytes returns encoded binary from EncapsulatedPacket struct options.
 func (ep *EncapsulatedPacket) Bytes() (buf *bytes.Buffer) {
-	buf = new(bytes.Buffer)
+	buf = Pool.NewBuffer(nil)
 	WriteByte(buf, ep.Reliability<<5|func() byte {
 		if ep.HasSplit {
 			return 1 << 4
@@ -98,7 +99,7 @@ func (ep *EncapsulatedPacket) Bytes() (buf *bytes.Buffer) {
 	WriteShort(buf, uint16(ep.Len())<<3)
 	if ep.Reliability > 0 {
 		Write(buf, func() []byte {
-			buf := new(bytes.Buffer)
+			buf := Pool.NewBuffer(nil)
 			if ep.Reliability >= 2 && ep.Reliability != 5 {
 				WriteLTriad(buf, ep.MessageIndex)
 			}
@@ -149,7 +150,7 @@ func (dp *DataPacket) TotalLen() int {
 
 // Encode encodes fields and packets to buffer.
 func (dp *DataPacket) Encode() {
-	dp.Buffer = new(bytes.Buffer)
+	dp.Buffer = Pool.NewBuffer(nil)
 	WriteByte(dp.Buffer, dp.Head)
 	WriteLTriad(dp.Buffer, dp.SeqNumber)
 	for _, ep := range dp.Packets {

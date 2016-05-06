@@ -1,7 +1,6 @@
 package highmc
 
 import (
-	"bytes"
 	"log"
 	"math/rand"
 	"net"
@@ -89,14 +88,14 @@ func (r *Router) receivePacket() {
 			log.Println("Error while reading packet:", err)
 			continue
 		} else if n > 0 {
-			buf := bytes.NewBuffer(r.recvBuf[0:n])
+			buf := Pool.NewBuffer(r.recvBuf[0:n])
 			pk := Packet{
 				Buffer:  buf,
 				Address: addr,
 			}
 			if c, err := buf.ReadByte(); err == nil && c == 0x01 { // Unconnected ping: no need to create session
 				pingID := ReadLong(buf)
-				buf := new(bytes.Buffer)
+				buf := Pool.NewBuffer(nil)
 				WriteByte(buf, 0x1c)
 				WriteLong(buf, pingID)
 				WriteLong(buf, serverID)

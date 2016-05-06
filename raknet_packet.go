@@ -93,7 +93,7 @@ func GetDataPacket(pid byte) (proto RaknetPacket) {
 type RaknetPacket interface {
 	Read(*bytes.Buffer) // NOTE: remove first byte(pid) before Read().
 	Handle(*Session)
-	Write(*bytes.Buffer) // NOTE: Write() should put pid before encoding with bytes.NewBuffer([]byte{), and should put target session address.
+	Write(*bytes.Buffer) // NOTE: Write() should put pid before encoding with Pool.NewBuffer([]byte{), and should put target session address.
 }
 
 // OpenConnectionRequest1 is a packet used in Raknet.
@@ -115,7 +115,7 @@ func (pk *OpenConnectionRequest1) Handle(session *Session) {
 		return
 	}
 	log.Println("Handling OCR1: Protocol", pk.Protocol)
-	buf := new(bytes.Buffer)
+	buf := Pool.NewBuffer(nil)
 	p := &OpenConnectionReply1{
 		ServerID: serverID,
 		MtuSize:  uint16(pk.MtuSize),
@@ -182,7 +182,7 @@ func (pk *OpenConnectionRequest2) Handle(session *Session) {
 	log.Println("Handling OCR2: clientID", pk.ClientID)
 	session.ID = pk.ClientID
 	atomic.StoreUint32(&session.mtuSize, uint32(pk.MtuSize))
-	buf := new(bytes.Buffer)
+	buf := Pool.NewBuffer(nil)
 	p := &OpenConnectionReply2{
 		ServerID:      serverID,
 		ClientAddress: session.Address,
@@ -352,7 +352,7 @@ func (pk *ClientConnect) Handle(session *Session) {
 	if session.Status != 2 {
 		return
 	}
-	buf := new(bytes.Buffer)
+	buf := Pool.NewBuffer(nil)
 	log.Println("Client handshake")
 	p := &ServerHandshake{
 		Address:         session.Address,
@@ -474,7 +474,7 @@ func (pk *Ping) Read(buf *bytes.Buffer) {
 
 // Handle implements RaknetPacket interfaces.
 func (pk *Ping) Handle(session *Session) {
-	buf := new(bytes.Buffer)
+	buf := Pool.NewBuffer(nil)
 	p := &Pong{PingID: pk.PingID}
 	p.Write(buf)
 	session.sendEncapsulatedDirect(&EncapsulatedPacket{Buffer: buf})

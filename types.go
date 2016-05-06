@@ -1,7 +1,6 @@
 package highmc
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 
@@ -191,9 +190,12 @@ func (c *Chunk) getHeight(x, z byte) {
 
 // FullChunkData returns full chunk payload for FullChunkDataPacket. Order is layered.
 func (c *Chunk) FullChunkData() []byte {
-	buf := bytes.NewBuffer(append(c.BlockData[:], c.MetaData[:]...)) // Block ID, Block MetaData
-	Write(buf, append(c.SkyLightData[:], c.LightData[:]...))         // SkyLight, Light
-	Write(buf, append(c.HeightMap[:], c.BiomeData[:]...))            // Height Map, Biome colors
+	buf := Pool.NewBuffer(c.BlockData[:]) // Block ID
+	Write(buf, c.MetaData[:])
+	Write(buf, c.SkyLightData[:])
+	Write(buf, c.LightData[:])
+	Write(buf, c.HeightMap[:])
+	Write(buf, c.BiomeData[:])
 	Write(buf, []byte{0, 0, 0, 0})                                   // Extra data: NBT length 0
 	// No tile entity NBT fields
 	return buf.Bytes()
@@ -1847,7 +1849,7 @@ func (i *Item) Read(buf io.Reader) {
 	length := uint32(ReadLShort(buf))
 	if length > 0 {
 		b, _ := Read(buf, int(length))
-		compound := bytes.NewBuffer(b)
+		compound := Pool.NewBuffer(b)
 		i.Compound = new(nbt.Compound)
 		i.Compound.ReadFrom(compound)
 	}
@@ -1858,11 +1860,11 @@ func (i Item) Write() []byte {
 	if i.ID == 0 {
 		return []byte{0, 0}
 	}
-	buf := new(bytes.Buffer)
+	buf := Pool.NewBuffer(nil)
 	WriteShort(buf, uint16(i.ID))
 	WriteByte(buf, i.Amount)
 	WriteShort(buf, i.Meta)
-	compound := new(bytes.Buffer)
+	compound := Pool.NewBuffer(nil)
 	i.Compound = new(nbt.Compound)
 	i.Compound.WriteTo(compound)
 	WriteLShort(buf, uint16(compound.Len()))
