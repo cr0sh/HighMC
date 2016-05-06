@@ -191,11 +191,13 @@ func (i Login) Handle(p *Player) (err error) {
 		ret.Status = LoginFailedServer
 		p.SendPacket(ret)
 		p.Disconnect("Outdated server")
+		log.Printf("Client protocol: %d, Server protocol: %d", i.Proto1, MinecraftProtocol)
 		return
 	} else if i.Proto1 < MinecraftProtocol {
 		ret.Status = LoginFailedClient
 		p.SendPacket(ret)
 		p.Disconnect("Outdated client")
+		log.Printf("Client protocol: %d, Server protocol: %d", i.Proto1, MinecraftProtocol)
 		return
 	}
 	ret.Status = LoginSuccess
@@ -461,7 +463,10 @@ func (i StartGame) Write() *bytes.Buffer {
 		i.Gamemode, i.EntityID, i.SpawnX,
 		i.SpawnY, i.SpawnZ, i.X,
 		i.Y, i.Z)
+	WriteByte(buf, 1)
+	WriteByte(buf, 1)
 	WriteByte(buf, 0)
+	WriteString(buf, "") // unknown
 	return buf
 }
 
@@ -1654,7 +1659,9 @@ func (i CraftingEvent) Write() *bytes.Buffer { return nil }
 
 // AdventureSettings needs to be documented.
 type AdventureSettings struct {
-	Flags uint32
+	Flags            uint32
+	UserPermission   uint32
+	GlobalPermission uint32
 }
 
 // Pid implements MCPEPacket interface.
