@@ -894,34 +894,44 @@ func (i Explode) Write() *bytes.Buffer {
 
 // Packet-specific constants
 const (
-	EventSoundClick            = 1000
-	EventSoundClickFail        = 1001
-	EventSoundShoot            = 1002
-	EventSoundDoor             = 1003
-	EventSoundFizz             = 1004
-	EventSoundGhast            = 1007
-	EventSoundGhastShoot       = 1008
-	EventSoundBlazeShoot       = 1009
-	EventSoundDoorBump         = 1010
-	EventSoundDoorCrash        = 1012
-	EventSoundBatFly           = 1015
-	EventSoundZombieInfect     = 1016
-	EventSoundZombieHeal       = 1017
-	EventSoundEndermanTeleport = 1018
-	EventSoundAnvilBreak       = 1020
-	EventSoundAnvilUse         = 1021
-	EventSoundAnvilFall        = 1022
-	EventParticleShoot         = 2000
-	EventParticleDestroy       = 2001
-	EventParticleSplash        = 2002
-	EventParticleEyeDespawn    = 2003
-	EventParticleSpawn         = 2004
-	EventStartRain             = 3001
-	EventStartThunder          = 3002
-	EventStopRain              = 3003
-	EventStopThunder           = 3004
-	EventSetData               = 4000
-	EventPlayersSleeping       = 9800
+	EventSoundClick                = 1000
+	EventSoundClickFail            = 1001
+	EventSoundShoot                = 1002
+	EventSoundDoor                 = 1003
+	EventSoundFizz                 = 1004
+	EventSoundTNT                  = 1005
+	EventSoundGhast                = 1007
+	EventSoundGhastShoot           = 1008
+	EventSoundBlazeShoot           = 1009
+	EventSoundDoorBump             = 1010
+	EventSoundDoorCrash            = 1012
+	EventSoundBatFly               = 1015
+	EventSoundZombieInfect         = 1016
+	EventSoundZombieHeal           = 1017
+	EventSoundEndermanTeleport     = 1018
+	EventSoundAnvilBreak           = 1020
+	EventSoundAnvilUse             = 1021
+	EventSoundAnvilFall            = 1022
+	EventSoundItemDrop             = 1030
+	EventSoundItemThrown           = 1031
+	EventSoundItemFrameItemAdded   = 1040
+	EventSoundItemFramePlaced      = 1041
+	EventSoundItemFrameRemoved     = 1042
+	EventSoundItemFrameItemRemoved = 1043
+	EventSoundItemFrameItemRotated = 1044
+	EventSoundButtonClick          = 3500
+	EventParticleShoot             = 2000
+	EventParticleDestroy           = 2001
+	EventParticleSplash            = 2002
+	EventParticleEyeDespawn        = 2003
+	EventParticleSpawn             = 2004
+	EventParticleUnknown           = 2005
+	EventStartRain                 = 3001
+	EventStartThunder              = 3002
+	EventStopRain                  = 3003
+	EventStopThunder               = 3004
+	EventSetData                   = 4000
+	EventPlayersSleeping           = 9800
 )
 
 // LevelEvent needs to be documented.
