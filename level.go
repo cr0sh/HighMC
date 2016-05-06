@@ -1,6 +1,7 @@
 package highmc
 
 import (
+	"runtime"
 	"sync"
 )
 
@@ -12,7 +13,7 @@ type BlockPos struct {
 
 // LevelReader is a level interface which allows Get* operations.
 type LevelReader interface {
-	Available(int32, int32) bool
+	Available(BlockPos) bool
 	Get(BlockPos) Block
 	GetID(BlockPos) byte
 	GetMeta(BlockPos) byte
@@ -23,6 +24,7 @@ type LevelWriter interface {
 	Set(BlockPos, Block)
 	SetID(BlockPos, byte)
 	SetMeta(BlockPos, byte)
+	CreateChunk(ChunkPos) *Chunk
 }
 
 // LevelReadWriter = LevelReader + LevelWriter
@@ -31,7 +33,7 @@ type LevelReadWriter interface {
 	LevelWriter
 }
 
-// StagedWriter is a wrapper for LevelWriter which buffers every write operations on stage, and batches write when executing Commit().
+// StagedWriter is a wrapper for LevelReadWriter which buffers every write operations on stage, and batches write when executing Commit().
 type StagedWriter struct {
 	wrap  LevelReadWriter
 	stage map[BlockPos]Block
@@ -44,7 +46,10 @@ func NewStagedWriter(wrap LevelReadWriter) *StagedWriter {
 
 // Commit batches all staged write operations and flushes the stage.
 func (sw *StagedWriter) Commit() {
-	// TODO
+	for pos, block := range sw.stage {
+		sw.wrap.Set(pos, block)
+	}
+	sw.stage = make(map[BlockPos]Block)
 }
 
 // Set wraps Level.Set method.
@@ -82,21 +87,31 @@ func (sw *StagedWriter) SetMeta(p BlockPos, m byte) {
 	}
 }
 
+// CreateChunk wraps Level.CreateChunk method: do not use.
+func (sw *StagedWriter) CreateChunk(pos ChunkPos) *Chunk {
+	panic("Use of CreateChunk on StagedWriter is unavailable")
+}
+
+type chunkRequest struct {
+	pos   ChunkPos
+	reply chan *Chunk
+}
+
 // Level is a struct to manage single MCPE world.
 // Accessing level blocks must be done on level callbacks with Level.(RO/RW)(Async/*) func.
 //
 // If you are writing many blocks to the level, use StagedWriter to buffer write operations.
 //
-// Use *Async func to run callback on level goroutine(async).
 type Level struct {
 	LoadedChunks map[ChunkPos]*Chunk
 
 	Name   string
 	Server *Server
 
-	roChan chan func(LevelReader)
-	rwChan chan func(LevelReadWriter)
-	mutex  *sync.RWMutex
+	roChan       chan func(LevelReader)
+	rwChan       chan func(LevelReadWriter)
+	chunkRequest chan chunkRequest
+	mutex        *sync.RWMutex
 }
 
 // Init initializes the level.
@@ -105,23 +120,36 @@ func (lv *Level) Init() {
 
 	lv.roChan = make(chan func(LevelReader), chanBufsize)
 	lv.rwChan = make(chan func(LevelReadWriter), chanBufsize)
+	lv.chunkRequest = make(chan chunkRequest, chanBufsize)
 	lv.mutex = new(sync.RWMutex)
 }
 
 func (lv *Level) process() {
 	for {
 		select {
-		case callback := <-lv.roChan:
-			lv.RO(callback)
-		case callback := <-lv.rwChan:
-			lv.RW(callback)
+		/*
+			case callback := <-lv.roChan:
+				lv.RO(callback)
+			case callback := <-lv.rwChan:
+				lv.RW(callback)
+		*/
 		}
+	}
+	n := runtime.NumCPU()
+	for i := 0; i < n; i++ {
+		go lv.chunkWorker()
 	}
 }
 
-// Available returns whether given coordinate's chunk is loaded or not.
-func (lv *Level) Available(x, z int32) bool {
-	_, ok := lv.LoadedChunks[ChunkPos{x >> 4, z >> 4}]
+func (lv *Level) chunkWorker() {
+	for req := range lv.chunkRequest {
+		req.reply <- nil // TODO
+	}
+}
+
+// Available returns whether given block is loaded.
+func (lv *Level) Available(pos BlockPos) bool {
+	_, ok := lv.LoadedChunks[GetChunkPos(pos)]
 	return ok
 }
 
@@ -193,6 +221,7 @@ func (lv *Level) RW(callback func(LevelReadWriter)) {
 	callback(lv)
 }
 
+/*
 // ROAsync executes RO callback on Level.process goroutine.
 func (lv *Level) ROAsync(callback func(LevelReader)) {
 	lv.roChan <- callback
@@ -201,4 +230,15 @@ func (lv *Level) ROAsync(callback func(LevelReader)) {
 // RWAsync executes RW callback on Level.process goroutine.
 func (lv *Level) RWAsync(callback func(LevelReadWriter)) {
 	lv.rwChan <- callback
+}
+*/
+
+// CreateChunk creates the chunk on given ChunkPos.
+func (lv *Level) CreateChunk(pos ChunkPos) *Chunk {
+	ch := make(chan *Chunk, 1)
+	lv.chunkRequest <- chunkRequest{
+		pos:   pos,
+		reply: ch,
+	}
+	return <-ch
 }
