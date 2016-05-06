@@ -228,7 +228,7 @@ func (i Login) Handle(p *Player) (err error) {
 	p.inventory.Holder = p
 	p.inventory.Init()
 
-	go p.process()
+	go p.once.Do(p.process)
 	p.firstSpawn()
 	// TODO
 

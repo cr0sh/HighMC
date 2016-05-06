@@ -46,6 +46,7 @@ type Player struct {
 
 	loggedIn bool
 	spawned  bool
+	once     *sync.Once
 }
 
 // NewPlayer creates new player struct.
@@ -60,6 +61,8 @@ func NewPlayer(session *Session) *Player {
 
 	p.SendCompressedRequest = make(chan []MCPEPacket, chanBufsize)
 	p.inventory = new(PlayerInventory)
+
+	p.once = new(sync.Once)
 	return p
 }
 
