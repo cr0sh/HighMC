@@ -111,6 +111,11 @@ func (p *Player) firstSpawn() {
 			})
 		}
 	}
+	p.SendPacket(&AdventureSettings{
+		Flags:            0,
+		UserPermission:   0x02,
+		GlobalPermission: 0x02,
+	})
 	p.SendPacket(&PlayStatus{
 		Status: PlayerSpawn,
 	})
@@ -124,6 +129,9 @@ func (p *Player) process() {
 	for {
 		select {
 		case <-p.closed:
+			if err := p.Server.UnregisterPlayer(p); err != nil {
+				log.Println("Error while unregistering player:", err)
+			}
 			return
 		case res := <-p.chunkResult:
 			if res.chunk == nil {

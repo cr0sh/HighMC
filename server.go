@@ -11,8 +11,9 @@ type Server struct {
 	callbackRequest chan func(*Player)
 	close           chan struct{}
 	registerRequest chan struct {
-		player *Player
-		ok     chan string
+		player   *Player
+		ok       chan error
+		register bool
 	}
 }
 
@@ -26,8 +27,9 @@ func NewServer() *Server {
 	s.players = make(map[string]*Player)
 	s.callbackRequest = make(chan func(*Player), chanBufsize)
 	s.registerRequest = make(chan struct {
-		player *Player
-		ok     chan string
+		player   *Player
+		ok       chan error
+		register bool // false: unregister
 	}, chanBufsize)
 	s.close = make(chan struct{})
 	return s
@@ -44,29 +46,59 @@ func (s *Server) process() {
 		case <-s.close:
 			return
 		case req := <-s.registerRequest:
-			if _, ok := s.players[req.player.Address.String()]; ok {
-				req.ok <- "player exists with same address:port"
-				continue
+			if req.register {
+				if _, ok := s.players[req.player.Address.String()]; ok {
+					req.ok <- fmt.Errorf("player exists with same address:port")
+					continue
+				}
+				s.players[req.player.Address.String()] = req.player
+				req.ok <- nil
+			} else {
+				if _, ok := s.players[req.player.Address.String()]; !ok {
+					req.ok <- fmt.Errorf("player does not exist")
+					continue
+				}
+				delete(s.players, req.player.Address.String())
+				req.ok <- nil
 			}
-			s.players[req.player.Address.String()] = req.player
-			req.ok <- ""
 		}
 	}
 }
 
 // RegisterPlayer attempts to register the player to server.
 func (s *Server) RegisterPlayer(p *Player) error {
-	ok := make(chan string, 1)
+	ok := make(chan error, 1)
 	s.registerRequest <- struct {
-		player *Player
-		ok     chan string
+		player   *Player
+		ok       chan error
+		register bool
 	}{
 		p,
 		ok,
+		true,
 	}
 	res := <-ok
-	if res != "" {
-		return fmt.Errorf(res)
+	if res != nil {
+		return res
+	}
+	return nil
+}
+
+// UnregisterPlayer attempts to unregister the player from server.
+func (s *Server) UnregisterPlayer(p *Player) error {
+	ok := make(chan error, 1)
+	s.registerRequest <- struct {
+		player   *Player
+		ok       chan error
+		register bool
+	}{
+		p,
+		ok,
+		false,
+	}
+	res := <-ok
+	if res != nil {
+		return res
 	}
 	return nil
 }

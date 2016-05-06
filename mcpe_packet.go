@@ -1681,12 +1681,16 @@ func (i AdventureSettings) Pid() byte { return AdventureSettingsHead }
 // Read implements MCPEPacket interface.
 func (i *AdventureSettings) Read(buf *bytes.Buffer) {
 	i.Flags = ReadInt(buf)
+	i.UserPermission = ReadInt(buf)
+	i.GlobalPermission = ReadInt(buf)
 }
 
 // Write implements MCPEPacket interface.
 func (i AdventureSettings) Write() *bytes.Buffer {
 	buf := bytes.NewBuffer([]byte{i.Pid()})
 	WriteInt(buf, i.Flags)
+	WriteInt(buf, i.UserPermission)
+	WriteInt(buf, i.GlobalPermission)
 	return buf
 }
 
