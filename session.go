@@ -118,7 +118,6 @@ func (s *Session) work() {
 			s.handlePacket(pk)
 		case <-s.timeout.C:
 			if s.Status < 3 || s.pingTries >= MaxPingTries {
-				log.Println("timeout?")
 				s.Close("timeout")
 				break
 			}
@@ -358,14 +357,13 @@ func (s *Session) SendEncapsulated(ep *EncapsulatedPacket) {
 		splitID := s.splitID
 		s.splitID++
 		splitIndex := uint32(0)
-		toSend := ep.Len()
 		mtu := (atomic.LoadUint32(&s.mtuSize) - 34)
 		splitCount := uint32(ep.Len()) / mtu
 		if uint32(ep.Len())%mtu != 0 {
 			splitCount++
 		}
 		for ep.Len() > 0 {
-			buf := ep.Next(int(s.mtuSize) - 34)
+			buf := ep.Next(int(mtu))
 			sp := new(EncapsulatedPacket)
 			sp.SplitID = splitID
 			sp.HasSplit = true
@@ -373,19 +371,14 @@ func (s *Session) SendEncapsulated(ep *EncapsulatedPacket) {
 			sp.Reliability = ep.Reliability
 			sp.SplitIndex = splitIndex
 			sp.Buffer = bytes.NewBuffer(buf)
-			toSend -= sp.Len()
-			if splitIndex > 0 {
-				sp.MessageIndex = s.messageIndex
-				s.messageIndex++
-			} else {
-				sp.MessageIndex = s.messageIndex
-			}
+			sp.MessageIndex = s.messageIndex
+			s.messageIndex++
 			if sp.Reliability == 3 {
 				sp.OrderChannel = ep.OrderChannel
 				sp.OrderIndex = ep.OrderIndex
 			}
 			splitIndex++
-			s.EncapsulatedChan <- ep
+			s.EncapsulatedChan <- sp
 		}
 	} else {
 		s.EncapsulatedChan <- ep
@@ -409,6 +402,7 @@ func (s *Session) send(pk *bytes.Buffer) {
 func (s *Session) Close(reason string) {
 	select {
 	case <-s.closed: // Already closed
+		log.Println("Warning: duplicate close attempt")
 		return
 	default:
 	}

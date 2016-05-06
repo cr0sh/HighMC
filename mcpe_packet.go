@@ -208,6 +208,7 @@ func (i Login) Handle(p *Player) (err error) {
 	// Init pos, etc.
 	if err := p.Server.RegisterPlayer(p); err != nil {
 		p.Disconnect("Authentication failure", err.Error())
+		return nil
 	}
 	log.Println("Autentication succeeded")
 	// Auth success!

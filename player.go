@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"io"
 	"log"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -99,7 +100,7 @@ func (p *Player) firstSpawn() {
 		}
 	}
 	payload := chunk.FullChunkData()
-	radius := int32(5)
+	radius := int32(3)
 	for cx := int32(0) - radius; cx <= radius; cx++ {
 		for cz := int32(0) - radius; cz <= radius; cz++ {
 			p.SendCompressed(&FullChunkData{
@@ -177,7 +178,7 @@ func (p *Player) SendCompressed(pks ...MCPEPacket) {
 		Payloads: make([][]byte, len(pks)),
 	}
 	for i, pk := range pks {
-		batch.Payloads[i] = append([]byte{pk.Pid()}, pk.Write().Bytes()...)
+		batch.Payloads[i] = pk.Write().Bytes()
 	}
 	p.SendPacket(batch)
 }
