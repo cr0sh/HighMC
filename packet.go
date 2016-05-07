@@ -39,7 +39,7 @@ func NewEncapsulated(buf *bytes.Buffer) (ep *EncapsulatedPacket) {
 	ep.HasSplit = (flags>>4)&1 > 0
 	l := uint32(ReadShort(buf))
 	length := l >> 3
-	if l%8 != 0 {
+	if l&7 != 0 {
 		length++
 	}
 	if ep.Reliability > 0 {
@@ -61,7 +61,6 @@ func NewEncapsulated(buf *bytes.Buffer) (ep *EncapsulatedPacket) {
 		panic(err.Error())
 	}
 	ep.Buffer = Pool.NewBuffer(b)
-	Pool.Recycle(buf)
 	return
 }
 

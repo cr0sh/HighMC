@@ -262,6 +262,7 @@ func (s *session) handlePacket(pk Packet) {
 	if handler := GetRaknetPacket(head); handler != nil {
 		handler.Read(pk.Buffer)
 		handler.Handle(s)
+		Pool.Recycle(pk.Buffer)
 	}
 }
 
@@ -339,6 +340,7 @@ func (s *session) handleEncapsulated(ep *EncapsulatedPacket) {
 		handler.Read(ep.Buffer)
 		handler.Handle(s)
 	}
+	Pool.Recycle(ep.Buffer)
 }
 
 func (s *session) connComplete() {
