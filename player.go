@@ -2,7 +2,6 @@ package highmc
 
 import (
 	"bytes"
-	"encoding/hex"
 	"io"
 	"log"
 	"sync"
@@ -72,7 +71,7 @@ func (p *player) HandlePacket(buf *bytes.Buffer) error {
 	head := ReadByte(buf)
 	pk := GetMCPEPacket(head)
 	if pk == nil {
-		log.Println("[!] Unexpected packet head:", hex.EncodeToString([]byte{head}))
+		log.Printf("[!] Unexpected packet head: 0x%02x", head)
 		return nil
 	}
 	var ok bool
@@ -193,7 +192,9 @@ func (p *player) SendCompressed(pks ...MCPEPacket) {
 }
 
 func (p *player) SendPacket(pk MCPEPacket) {
-	p.SendRaw(pk.Write())
+	buf := pk.Write()
+	p.SendRaw(buf)
+	Pool.Recycle(buf)
 }
 
 // SendRaw sends raw bytes buffer to client.
