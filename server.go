@@ -7,11 +7,11 @@ type Server struct {
 	*Router
 	OpenSessions    map[string]struct{}
 	Levels          map[string]*Level
-	players         map[string]*Player // Not goroutine-safe, so make it unexported.
-	callbackRequest chan func(*Player)
+	players         map[string]*player // Not goroutine-safe, so make it unexported.
+	callbackRequest chan func(*player)
 	close           chan struct{}
 	registerRequest chan struct {
-		player   *Player
+		player   *player
 		ok       chan error
 		register bool
 	}
@@ -24,10 +24,10 @@ func NewServer() *Server {
 	s.Levels = map[string]*Level{
 		defaultLvl: {Name: "dummy", Server: s},
 	}
-	s.players = make(map[string]*Player)
-	s.callbackRequest = make(chan func(*Player), chanBufsize)
+	s.players = make(map[string]*player)
+	s.callbackRequest = make(chan func(*player), chanBufsize)
 	s.registerRequest = make(chan struct {
-		player   *Player
+		player   *player
 		ok       chan error
 		register bool // false: unregister
 	}, chanBufsize)
@@ -66,10 +66,10 @@ func (s *Server) process() {
 }
 
 // RegisterPlayer attempts to register the player to server.
-func (s *Server) RegisterPlayer(p *Player) error {
+func (s *Server) RegisterPlayer(p *player) error {
 	ok := make(chan error, 1)
 	s.registerRequest <- struct {
-		player   *Player
+		player   *player
 		ok       chan error
 		register bool
 	}{
@@ -85,10 +85,10 @@ func (s *Server) RegisterPlayer(p *Player) error {
 }
 
 // UnregisterPlayer attempts to unregister the player from server.
-func (s *Server) UnregisterPlayer(p *Player) error {
+func (s *Server) UnregisterPlayer(p *player) error {
 	ok := make(chan error, 1)
 	s.registerRequest <- struct {
-		player   *Player
+		player   *player
 		ok       chan error
 		register bool
 	}{

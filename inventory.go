@@ -8,7 +8,7 @@ type PlayerInventory struct {
 	*Inventory
 	Hotbars []Item
 	Hand    Item
-	Holder  *Player
+	Holder  *player
 }
 
 // Init initializes the inventory.

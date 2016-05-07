@@ -138,7 +138,7 @@ type MCPEPacket interface {
 // Handleable is an interface for handling received MCPE packets.
 type Handleable interface {
 	MCPEPacket
-	Handle(*Player) error
+	Handle(*player) error
 }
 
 // GetMCPEPacket returns MCPEPacket struct with given pid.
@@ -184,7 +184,7 @@ func (i Login) Write() *bytes.Buffer {
 }
 
 // Handle implements Handleable interface.
-func (i Login) Handle(p *Player) (err error) {
+func (i Login) Handle(p *player) (err error) {
 	p.Username = i.Username
 	ret := new(PlayStatus)
 	if i.Proto1 > MinecraftProtocol {
@@ -285,7 +285,7 @@ func (i *Disconnect) Write() *bytes.Buffer {
 }
 
 // Handle implements Handleable interface.
-func (i Disconnect) Handle(p *Player) (err error) {
+func (i Disconnect) Handle(p *player) (err error) {
 	p.Disconnect("Client disconnect")
 	return
 }
@@ -330,7 +330,7 @@ func (i Batch) Write() *bytes.Buffer {
 }
 
 // Handle implements Handleable interface.
-func (i Batch) Handle(p *Player) (err error) {
+func (i Batch) Handle(p *player) (err error) {
 	var errs string
 	for i, payload := range i.Payloads {
 		if err := p.HandlePacket(Pool.NewBuffer(payload)); err != nil {

@@ -73,7 +73,7 @@ var AddressTemplate = []*net.UDPAddr{
 // GetRaknetPacket returns raknet packet with given packet ID.
 func GetRaknetPacket(pid byte) (proto RaknetPacket) {
 	if pid >= 0x80 && pid < 0x90 {
-		pid = 0x80
+		return handlers[0x80]
 	}
 	if v, ok := handlers[pid]; ok {
 		return v
@@ -92,7 +92,7 @@ func GetDataPacket(pid byte) (proto RaknetPacket) {
 // RaknetPacket is a handler interface for Raknet packets.
 type RaknetPacket interface {
 	Read(*bytes.Buffer) // NOTE: remove first byte(pid) before Read().
-	Handle(*Session)
+	Handle(*session)
 	Write(*bytes.Buffer) // NOTE: Write() should put pid before encoding with Pool.NewBuffer([]byte{), and should put target session address.
 }
 
@@ -110,7 +110,7 @@ func (pk *OpenConnectionRequest1) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *OpenConnectionRequest1) Handle(session *Session) {
+func (pk *OpenConnectionRequest1) Handle(session *session) {
 	if session.Status > 1 {
 		return
 	}
@@ -148,7 +148,7 @@ func (pk *OpenConnectionReply1) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *OpenConnectionReply1) Handle(session *Session) {}
+func (pk *OpenConnectionReply1) Handle(session *session) {}
 
 // Write implements RaknetPacket interfaces.
 func (pk *OpenConnectionReply1) Write(buf *bytes.Buffer) {
@@ -175,7 +175,7 @@ func (pk *OpenConnectionRequest2) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *OpenConnectionRequest2) Handle(session *Session) {
+func (pk *OpenConnectionRequest2) Handle(session *session) {
 	if session.Status != 1 {
 		return
 	}
@@ -218,7 +218,7 @@ func (pk *OpenConnectionReply2) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *OpenConnectionReply2) Handle(session *Session) {}
+func (pk *OpenConnectionReply2) Handle(session *session) {}
 
 // Write implements RaknetPacket interfaces.
 func (pk *OpenConnectionReply2) Write(buf *bytes.Buffer) {
@@ -251,7 +251,7 @@ func (pk *GeneralDataPacket) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *GeneralDataPacket) Handle(session *Session) {
+func (pk *GeneralDataPacket) Handle(session *session) {
 	if pk.SeqNumber < session.windowBorder[0] || pk.SeqNumber >= session.windowBorder[1] {
 		return
 	}
@@ -299,7 +299,7 @@ func (pk *Ack) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *Ack) Handle(session *Session) {
+func (pk *Ack) Handle(session *session) {
 	session.AckChan <- ackUpdate{got: true, seqs: pk.Seqs}
 }
 
@@ -319,7 +319,7 @@ func (pk *Nack) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *Nack) Handle(session *Session) {
+func (pk *Nack) Handle(session *session) {
 	session.AckChan <- ackUpdate{got: true, nack: true, seqs: pk.Seqs}
 	for _, seq := range pk.Seqs {
 		if _, ok := session.nackQueue[seq]; ok {
@@ -348,7 +348,7 @@ func (pk *ClientConnect) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *ClientConnect) Handle(session *Session) {
+func (pk *ClientConnect) Handle(session *session) {
 	if session.Status != 2 {
 		return
 	}
@@ -384,7 +384,7 @@ type ClientDisconnect struct{}
 func (pk *ClientDisconnect) Read(buf *bytes.Buffer) {}
 
 // Handle implements RaknetPacket interfaces.
-func (pk *ClientDisconnect) Handle(session *Session) { session.Close("client disconnect") }
+func (pk *ClientDisconnect) Handle(session *session) { session.Close("client disconnect") }
 
 // Write implements RaknetPacket interfaces.
 func (pk *ClientDisconnect) Write(buf *bytes.Buffer) {}
@@ -409,7 +409,7 @@ func (pk *ClientHandshake) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *ClientHandshake) Handle(session *Session) {
+func (pk *ClientHandshake) Handle(session *session) {
 	log.Println("Client connected successfully!")
 	session.Status = 3
 	session.connComplete()
@@ -447,7 +447,7 @@ func (pk *ServerHandshake) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *ServerHandshake) Handle(session *Session) {}
+func (pk *ServerHandshake) Handle(session *session) {}
 
 // Write implements RaknetPacket interfaces.
 func (pk *ServerHandshake) Write(buf *bytes.Buffer) {
@@ -473,7 +473,7 @@ func (pk *Ping) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *Ping) Handle(session *Session) {
+func (pk *Ping) Handle(session *session) {
 	buf := Pool.NewBuffer(nil)
 	p := &Pong{PingID: pk.PingID}
 	p.Write(buf)
@@ -499,7 +499,7 @@ func (pk *Pong) Read(buf *bytes.Buffer) {
 }
 
 // Handle implements RaknetPacket interfaces.
-func (pk *Pong) Handle(session *Session) {
+func (pk *Pong) Handle(session *session) {
 	if session.pingTries > 0 {
 		session.timeout.Reset(timeout)
 		session.pingTries = 0

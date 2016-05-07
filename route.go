@@ -18,7 +18,7 @@ type Router struct {
 	closeNotify chan *net.UDPAddr
 	recvBuf     []byte
 
-	Sessions map[string]*Session
+	sessions map[string]*session
 	Owner    *Server
 }
 
@@ -30,25 +30,24 @@ func CreateRouter(port uint16) (r *Router, err error) {
 	r.recvChan = make(chan Packet, chanBufsize)
 	r.conn, err = net.ListenUDP("udp", &net.UDPAddr{Port: int(port)})
 	r.closeNotify = make(chan *net.UDPAddr, chanBufsize)
-	r.Sessions = make(map[string]*Session)
+	r.sessions = make(map[string]*session)
 	// r.playerAdder = playerAdder
 	// r.playerRemover = playerRemover
 	return
 }
 
 // GetSession returns session with given identifier if exists, or creates new one.
-func (r *Router) GetSession(address *net.UDPAddr, sendChannel chan Packet) *Session {
-	if s, ok := r.Sessions[address.String()]; ok {
+func (r *Router) GetSession(address *net.UDPAddr, sendChannel chan Packet) *session {
+	if s, ok := r.sessions[address.String()]; ok {
 		return s
 	}
 	log.Println("New session:", address)
-	sess := new(Session)
-	sess.Init(address)
+	sess := NewSession(address)
 	sess.SendChan = sendChannel
 	sess.Server = r.Owner
 	go sess.sendAsync()
 	go sess.work()
-	r.Sessions[address.String()] = sess
+	r.sessions[address.String()] = sess
 	return sess
 }
 
@@ -115,7 +114,7 @@ func (r *Router) receivePacket() {
 }
 
 func (r *Router) updateSession() {
-	for _, sess := range r.Sessions {
+	for _, sess := range r.sessions {
 		select {
 		case <-sess.closed:
 			r.closeSession(sess.Address)
@@ -125,7 +124,7 @@ func (r *Router) updateSession() {
 }
 
 func (r *Router) closeSession(addr *net.UDPAddr) {
-	delete(r.Sessions, addr.String())
+	delete(r.sessions, addr.String())
 	blockList[addr.String()] = time.Now().Add(time.Second + time.Millisecond*750)
 }
 

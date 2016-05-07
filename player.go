@@ -13,7 +13,7 @@ import (
 // PlayerCallback is a struct for delivering callbacks to other player goroutines;
 // It is usually used to bypass race issues.
 type PlayerCallback struct {
-	Call func(*Player)
+	Call func(*player)
 }
 
 type chunkResult struct {
@@ -22,8 +22,8 @@ type chunkResult struct {
 }
 
 // Player is a struct for handling/containing MCPE client specific things.
-type Player struct {
-	*Session
+type player struct {
+	*session
 	Username string
 	ID       uint64
 	UUID     [16]byte
@@ -51,9 +51,9 @@ type Player struct {
 }
 
 // NewPlayer creates new player struct.
-func NewPlayer(session *Session) *Player {
-	p := new(Player)
-	p.Session = session
+func NewPlayer(session *session) *player {
+	p := new(player)
+	p.session = session
 	// p.Level = p.Server.GetDefaultLevel()
 	p.EntityID = atomic.AddUint64(&lastEntityID, 1)
 	p.playerShown = make(map[uint64]struct{})
@@ -68,7 +68,7 @@ func NewPlayer(session *Session) *Player {
 }
 
 // HandlePacket handles MCPE data packet.
-func (p *Player) HandlePacket(buf *bytes.Buffer) error {
+func (p *player) HandlePacket(buf *bytes.Buffer) error {
 	head := ReadByte(buf)
 	pk := GetMCPEPacket(head)
 	if pk == nil {
@@ -89,7 +89,7 @@ func (p *Player) HandlePacket(buf *bytes.Buffer) error {
 	return nil
 }
 
-func (p *Player) firstSpawn() {
+func (p *player) firstSpawn() {
 	chunk := new(Chunk)
 	for x := byte(0); x < byte(16); x++ {
 		for z := byte(0); z < byte(16); z++ {
@@ -123,7 +123,7 @@ func (p *Player) firstSpawn() {
 	log.Println("PlayStatus PlayerSpawn")
 }
 
-func (p *Player) process() {
+func (p *player) process() {
 	p.chunkUpdate = time.NewTicker(time.Millisecond * 200)
 	p.chunkResult = make(chan chunkResult, chanBufsize)
 	// chunkReq := make(chan [2]int32, chanBufsize)
@@ -155,7 +155,7 @@ func (p *Player) process() {
 	}
 }
 
-func (p *Player) updateChunk() {
+func (p *player) updateChunk() {
 	// TODO
 }
 
@@ -163,7 +163,7 @@ func (p *Player) updateChunk() {
 // Arguments are dynamic. Player.Disconnect(ToSend, ToLog) will send ToSend string to client, and log ToLog to logger.
 // If you supply nothing, or "" for ToSend, it'll be set to default.
 // Similarly, if you supply "" or nothing for ToLog, it'll be same as ToSend.
-func (p *Player) Disconnect(opts ...string) {
+func (p *player) Disconnect(opts ...string) {
 	var msg, log string
 	if len(opts) == 0 || opts[0] == "" {
 		msg = "Generic reason"
@@ -182,7 +182,7 @@ func (p *Player) Disconnect(opts ...string) {
 }
 
 // SendCompressed sends packed BatchPacket with given packets.
-func (p *Player) SendCompressed(pks ...MCPEPacket) {
+func (p *player) SendCompressed(pks ...MCPEPacket) {
 	batch := &Batch{
 		Payloads: make([][]byte, len(pks)),
 	}
@@ -192,12 +192,12 @@ func (p *Player) SendCompressed(pks ...MCPEPacket) {
 	p.SendPacket(batch)
 }
 
-func (p *Player) SendPacket(pk MCPEPacket) {
-	p.Send(pk.Write())
+func (p *player) SendPacket(pk MCPEPacket) {
+	p.SendRaw(pk.Write())
 }
 
-// Send sends raw bytes buffer to client.
-func (p *Player) Send(buf *bytes.Buffer) {
+// SendRaw sends raw bytes buffer to client.
+func (p *player) SendRaw(buf *bytes.Buffer) {
 	ep := new(EncapsulatedPacket)
 	ep.Reliability = 2
 	ep.Buffer = Pool.NewBuffer([]byte{0x8e})

@@ -29,15 +29,14 @@ type ackUpdate struct {
 	seqs []uint32
 }
 
-// Session contains player specific values for raknet-level communication.
-type Session struct {
+type session struct {
 	Status           byte
 	ReceivedChan     chan Packet // Packet from router
 	SendChan         chan Packet // Send request to router
 	EncapsulatedChan chan *EncapsulatedPacket
 	AckChan          chan ackUpdate
 
-	Player *Player
+	Player *player
 	Server *Server
 
 	ID                 uint64
@@ -70,8 +69,9 @@ type Session struct {
 	closed        chan struct{}
 }
 
-// Init sets initial value for session.
-func (s *Session) Init(address *net.UDPAddr) {
+// NewSession returns new session instance.
+func NewSession(address *net.UDPAddr) *session {
+	s := new(session)
 	s.Address = address
 
 	s.ReceivedChan = make(chan Packet, chanBufsize)
@@ -98,9 +98,10 @@ func (s *Session) Init(address *net.UDPAddr) {
 
 	s.lastSeq = ^uint32(0)
 	s.lastMsgIndex = ^uint32(0)
+	return s
 }
 
-func (s *Session) work() {
+func (s *session) work() {
 	for {
 		select { // Workaround for first-class priority close signal
 		case <-s.closed:
@@ -133,7 +134,7 @@ func (s *Session) work() {
 	}
 }
 
-func (s *Session) sendAsync() {
+func (s *session) sendAsync() {
 	for {
 		select { // Workaround for first-class priority close signal
 		case <-s.closed:
@@ -161,7 +162,7 @@ func (s *Session) sendAsync() {
 	}
 }
 
-func (s *Session) update() {
+func (s *session) update() {
 	if len(s.ackQueue) > 0 {
 		acks := make([]uint32, len(s.ackQueue))
 		i := 0
@@ -191,7 +192,7 @@ func (s *Session) update() {
 	for seq, pk := range s.recovery {
 		if pk.SendTime.Add(RecoveryTimeout).Before(time.Now()) {
 			s.send(pk.Buffer)
-			Pool.Reset(pk.Buffer)
+			Pool.Recycle(pk.Buffer)
 			delete(s.recovery, seq)
 		} else {
 			break
@@ -199,7 +200,7 @@ func (s *Session) update() {
 	}
 }
 
-func (s *Session) windowUpdate() {
+func (s *session) windowUpdate() {
 	for seq := range s.packetWindow {
 		if seq < atomic.LoadUint32(&s.windowBorder[0]) {
 			delete(s.packetWindow, seq)
@@ -209,7 +210,7 @@ func (s *Session) windowUpdate() {
 	}
 }
 
-func (s *Session) handleAckUpdate(u ackUpdate) {
+func (s *session) handleAckUpdate(u ackUpdate) {
 	if u.got {
 		if u.nack {
 			for _, seq := range u.seqs {
@@ -237,7 +238,7 @@ func (s *Session) handleAckUpdate(u ackUpdate) {
 	}
 }
 
-func (s *Session) handlePacket(pk Packet) {
+func (s *session) handlePacket(pk Packet) {
 	defer func() {
 		r := recover()
 		if r == nil {
@@ -264,7 +265,7 @@ func (s *Session) handlePacket(pk Packet) {
 	}
 }
 
-func (s *Session) preEncapsulated(ep *EncapsulatedPacket) {
+func (s *session) preEncapsulated(ep *EncapsulatedPacket) {
 	if ep.Reliability >= 2 && ep.Reliability != 5 { // MessageIndex exists
 		if ep.MessageIndex < s.reliableBorder[0] || ep.MessageIndex >= s.reliableBorder[1] { // Outside of window
 			//log.Println("MessageIndex drop:", ep.MessageIndex, "should be", s.reliableBorder[0], "<= n <", s.reliableBorder[1])
@@ -295,7 +296,7 @@ func (s *Session) preEncapsulated(ep *EncapsulatedPacket) {
 	}
 }
 
-func (s *Session) joinSplits(ep *EncapsulatedPacket) {
+func (s *session) joinSplits(ep *EncapsulatedPacket) {
 	if s.Status < 3 {
 		return
 	}
@@ -318,10 +319,12 @@ func (s *Session) joinSplits(ep *EncapsulatedPacket) {
 	}
 }
 
-func (s *Session) handleEncapsulated(ep *EncapsulatedPacket) {
+func (s *session) handleEncapsulated(ep *EncapsulatedPacket) {
 	if ep.HasSplit {
 		if s.Status > 2 {
 			s.joinSplits(ep)
+		} else {
+			log.Println("Warning: Got split packet in connecting state")
 		}
 		return
 	}
@@ -329,6 +332,7 @@ func (s *Session) handleEncapsulated(ep *EncapsulatedPacket) {
 
 	if s.Status > 2 && head == 0x8e {
 		s.Player.HandlePacket(ep.Buffer)
+		return
 	}
 
 	if handler := GetDataPacket(head); handler != nil {
@@ -337,7 +341,7 @@ func (s *Session) handleEncapsulated(ep *EncapsulatedPacket) {
 	}
 }
 
-func (s *Session) connComplete() {
+func (s *session) connComplete() {
 	if s.Status != 3 {
 		return
 	}
@@ -345,7 +349,7 @@ func (s *Session) connComplete() {
 }
 
 // SendEncapsulated processes EncapsulatedPacket informations before sending.
-func (s *Session) SendEncapsulated(ep *EncapsulatedPacket) {
+func (s *session) SendEncapsulated(ep *EncapsulatedPacket) {
 	if ep.Reliability >= 2 && ep.Reliability != 5 {
 		ep.MessageIndex = s.messageIndex
 		s.messageIndex++
@@ -386,7 +390,7 @@ func (s *Session) SendEncapsulated(ep *EncapsulatedPacket) {
 	}
 }
 
-func (s *Session) sendEncapsulatedDirect(ep *EncapsulatedPacket) {
+func (s *session) sendEncapsulatedDirect(ep *EncapsulatedPacket) {
 	dp := new(DataPacket)
 	dp.Head = 0x80
 	dp.SeqNumber = atomic.AddUint32(&s.seqNumber, 1)
@@ -395,12 +399,12 @@ func (s *Session) sendEncapsulatedDirect(ep *EncapsulatedPacket) {
 	s.send(dp.Buffer)
 }
 
-func (s *Session) send(pk *bytes.Buffer) {
+func (s *session) send(pk *bytes.Buffer) {
 	s.SendChan <- Packet{pk, s.Address}
 }
 
 // Close stops current session.
-func (s *Session) Close(reason string) {
+func (s *session) Close(reason string) {
 	select {
 	case <-s.closed: // Already closed
 		log.Println("Warning: duplicate close attempt")
