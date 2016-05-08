@@ -10,11 +10,12 @@ import (
 type Packet struct {
 	*bytes.Buffer
 	Address *net.UDPAddr
+	Recycle bool
 }
 
 // NewPacket creates new packet with given packet id.
 func NewPacket(pid byte) Packet {
-	return Packet{Pool.NewBuffer([]byte{pid}), new(net.UDPAddr)}
+	return Packet{Pool.NewBuffer([]byte{pid}), new(net.UDPAddr), false}
 }
 
 // EncapsulatedPacket is a struct, containing more values for decoding/encoding encapsualted packets.

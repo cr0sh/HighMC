@@ -5,78 +5,50 @@ import (
 	"io"
 	"log"
 	"net"
+	"reflect"
 	"sync/atomic"
 )
 
-var handlers = map[byte]RaknetPacket{
-	0x05: new(OpenConnectionRequest1),
-	0x06: new(OpenConnectionReply1),
-	0x07: new(OpenConnectionRequest2),
-	0x08: new(OpenConnectionReply2),
-	0x80: new(GeneralDataPacket),
-	0xa0: new(Nack),
-	0xc0: new(Ack),
+var handlers = map[byte]reflect.Type{
+	0x05: reflect.TypeOf(OpenConnectionRequest1{}),
+	0x06: reflect.TypeOf(OpenConnectionReply1{}),
+	0x07: reflect.TypeOf(OpenConnectionRequest2{}),
+	0x08: reflect.TypeOf(OpenConnectionReply2{}),
+	0x80: reflect.TypeOf(GeneralDataPacket{}),
+	0xa0: reflect.TypeOf(Nack{}),
+	0xc0: reflect.TypeOf(Ack{}),
 }
-var dataPacketHandlers = map[byte]RaknetPacket{
-	0x00: new(Ping),
-	0x03: new(Pong),
-	0x09: new(ClientConnect),
-	0x10: new(ServerHandshake),
-	0x13: new(ClientHandshake),
-	0x15: new(ClientDisconnect),
+
+var dataPacketHandlers = map[byte]reflect.Type{
+	0x00: reflect.TypeOf(Ping{}),
+	0x03: reflect.TypeOf(Pong{}),
+	0x09: reflect.TypeOf(ClientConnect{}),
+	0x10: reflect.TypeOf(ServerHandshake{}),
+	0x13: reflect.TypeOf(ClientHandshake{}),
+	0x15: reflect.TypeOf(ClientDisconnect{}),
 }
 
 // AddressTemplate ...
 var AddressTemplate = []*net.UDPAddr{
-	{
-		IP:   []byte{127, 0, 0, 1},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
-	{
-		IP:   []byte{0, 0, 0, 0},
-		Port: 0,
-	},
+	{IP: []byte{127, 0, 0, 1}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
+	{IP: []byte{0, 0, 0, 0}, Port: 0},
 }
 
 // GetRaknetPacket returns raknet packet with given packet ID.
 func GetRaknetPacket(pid byte) (proto RaknetPacket) {
 	if pid >= 0x80 && pid < 0x90 {
-		return handlers[0x80]
+		return reflect.New(handlers[0x80]).Interface().(RaknetPacket)
 	}
 	if v, ok := handlers[pid]; ok {
-		return v
+		return reflect.New(v).Interface().(RaknetPacket)
 	}
 	return
 }
@@ -84,7 +56,7 @@ func GetRaknetPacket(pid byte) (proto RaknetPacket) {
 // GetDataPacket returns datapacket with given packet ID.
 func GetDataPacket(pid byte) (proto RaknetPacket) {
 	if v, ok := dataPacketHandlers[pid]; ok {
-		return v
+		return reflect.New(v).Interface().(RaknetPacket)
 	}
 	return
 }

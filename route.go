@@ -131,6 +131,9 @@ func (r *Router) closeSession(addr *net.UDPAddr) {
 func (r *Router) sendAsync() {
 	for pk := range r.sendChan {
 		r.sendPacket(pk)
+		if pk.Recycle {
+			Pool.Recycle(pk.Buffer)
+		}
 	}
 }
 

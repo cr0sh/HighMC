@@ -2,7 +2,6 @@ package highmc
 
 import (
 	"bytes"
-	"encoding/hex"
 	"io"
 	"log"
 	"sync"
@@ -71,7 +70,7 @@ func (p *player) HandlePacket(buf *bytes.Buffer) error {
 	head := ReadByte(buf)
 	pk := GetMCPEPacket(head)
 	if pk == nil {
-		log.Println("[!] Unexpected packet head:", hex.EncodeToString([]byte{head}))
+		log.Printf("[!] Unexpected packet head: 0x%02x", head)
 		return nil
 	}
 	var ok bool
@@ -160,6 +159,16 @@ func (p *player) updateChunk() {
 	// TODO
 }
 
+// BroadcastOthers sends message to all other players.
+func (p *player) BroadcastOthers(msg string) {
+	p.Server.BroadcastPacket(&Text{
+		TextType: TextTypeRaw,
+		Message:  msg,
+	}, func(t *player) bool {
+		return t.EntityID != p.EntityID
+	})
+}
+
 // Disconnect kicks player from the server.
 // Arguments are dynamic. Player.Disconnect(ToSend, ToLog) will send ToSend string to client, and log ToLog to logger.
 // If you supply nothing, or "" for ToSend, it'll be set to default.
@@ -179,7 +188,7 @@ func (p *player) Disconnect(opts ...string) {
 	p.SendPacket(&Disconnect{
 		Message: msg,
 	})
-	p.Server.Message(p.Username + " quit the game")
+	p.BroadcastOthers(p.Username + " quit the game")
 	p.Close(log)
 }
 
@@ -195,7 +204,9 @@ func (p *player) SendCompressed(pks ...MCPEPacket) {
 }
 
 func (p *player) SendPacket(pk MCPEPacket) {
-	p.SendRaw(pk.Write())
+	buf := pk.Write()
+	p.SendRaw(buf)
+	Pool.Recycle(buf)
 }
 
 // SendRaw sends raw bytes buffer to client.
@@ -204,5 +215,5 @@ func (p *player) SendRaw(buf *bytes.Buffer) {
 	ep.Reliability = 2
 	ep.Buffer = Pool.NewBuffer([]byte{0x8e})
 	io.Copy(ep.Buffer, buf)
-	p.SendEncapsulated(ep)
+	p.EncapsulatedChan <- ep
 }

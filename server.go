@@ -3,6 +3,8 @@ package highmc
 import (
 	"fmt"
 	"log"
+	"sync/atomic"
+	"unsafe"
 )
 
 // Server is a main server object.
@@ -64,6 +66,7 @@ func (s *Server) process() {
 					req.ok <- fmt.Errorf("player exists with same address:port")
 					continue
 				}
+				go req.player.once.Do(req.player.process)
 				s.players[req.player.Address.String()] = req.player
 				req.player.playerShown = make(map[uint64]struct{})
 				for _, p := range s.players {
@@ -153,13 +156,14 @@ func (s *Server) Message(msg string) {
 
 // ShowPlayer shows p to t.
 func (s *Server) ShowPlayer(p, t *player) {
+	x, y, z := unsafe.Pointer(&p.Position.X), unsafe.Pointer(&p.Position.Y), unsafe.Pointer(&p.Position.Z)
 	t.SendRequest <- &AddPlayer{
 		RawUUID:  p.UUID,
 		Username: p.Username,
 		EntityID: p.EntityID,
-		X:        p.Position.X,
-		Y:        p.Position.Y,
-		Z:        p.Position.Z,
+		X:        *(*float32)(atomic.LoadPointer(&x)),
+		Y:        *(*float32)(atomic.LoadPointer(&y)),
+		Z:        *(*float32)(atomic.LoadPointer(&z)),
 		BodyYaw:  p.BodyYaw,
 		Yaw:      p.Yaw,
 		Pitch:    p.Pitch,

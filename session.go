@@ -140,10 +140,13 @@ func (s *session) sendAsync() {
 		case <-s.closed:
 			s.updateTicker.Stop()
 			s.timeout.Stop()
+			return
 		default:
 		}
 		select {
 		case <-s.closed:
+			s.updateTicker.Stop()
+			s.timeout.Stop()
 			return
 		case ep := <-s.EncapsulatedChan:
 			dp := new(DataPacket)
@@ -192,7 +195,6 @@ func (s *session) update() {
 	for seq, pk := range s.recovery {
 		if pk.SendTime.Add(RecoveryTimeout).Before(time.Now()) {
 			s.send(pk.Buffer)
-			Pool.Recycle(pk.Buffer)
 			delete(s.recovery, seq)
 		} else {
 			break
@@ -402,7 +404,7 @@ func (s *session) sendEncapsulatedDirect(ep *EncapsulatedPacket) {
 }
 
 func (s *session) send(pk *bytes.Buffer) {
-	s.SendChan <- Packet{pk, s.Address}
+	s.SendChan <- Packet{pk, s.Address, true}
 }
 
 // Close stops current session.

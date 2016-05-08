@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"fmt"
 	"log"
+	"reflect"
 	"sync/atomic"
+	"unsafe"
 )
 
 // Packet IDs
@@ -72,60 +74,60 @@ const (
 	_ // ReplaceSelectedItem
 )
 
-var packets = map[byte]MCPEPacket{
-	LoginHead:               new(Login),
-	PlayStatusHead:          new(PlayStatus),
-	DisconnectHead:          new(Disconnect),
-	BatchHead:               new(Batch),
-	TextHead:                new(Text),
-	SetTimeHead:             new(SetTime),
-	StartGameHead:           new(StartGame),
-	AddPlayerHead:           new(AddPlayer),
-	RemovePlayerHead:        new(RemovePlayer),
-	AddEntityHead:           new(AddEntity),
-	RemoveEntityHead:        new(RemoveEntity),
-	AddItemEntityHead:       new(AddItemEntity),
-	TakeItemEntityHead:      new(TakeItemEntity),
-	MoveEntityHead:          new(MoveEntity),
-	MovePlayerHead:          new(MovePlayer),
-	RemoveBlockHead:         new(RemoveBlock),
-	UpdateBlockHead:         new(UpdateBlock),
-	AddPaintingHead:         new(AddPainting),
-	ExplodeHead:             new(Explode),
-	LevelEventHead:          new(LevelEvent),
-	BlockEventHead:          new(BlockEvent),
-	EntityEventHead:         new(EntityEvent),
-	MobEffectHead:           new(MobEffect),
-	UpdateAttributesHead:    new(UpdateAttributes),
-	MobEquipmentHead:        new(MobEquipment),
-	MobArmorEquipmentHead:   new(MobArmorEquipment),
-	InteractHead:            new(Interact),
-	UseItemHead:             new(UseItem),
-	PlayerActionHead:        new(PlayerAction),
-	HurtArmorHead:           new(HurtArmor),
-	SetEntityDataHead:       new(SetEntityData),
-	SetEntityMotionHead:     new(SetEntityMotion),
-	SetEntityLinkHead:       new(SetEntityLink),
-	SetHealthHead:           new(SetHealth),
-	SetSpawnPositionHead:    new(SetSpawnPosition),
-	AnimateHead:             new(Animate),
-	RespawnHead:             new(Respawn),
-	DropItemHead:            new(DropItem),
-	ContainerOpenHead:       new(ContainerOpen),
-	ContainerCloseHead:      new(ContainerClose),
-	ContainerSetSlotHead:    new(ContainerSetSlot),
-	ContainerSetDataHead:    new(ContainerSetData),
-	ContainerSetContentHead: new(ContainerSetContent),
-	CraftingDataHead:        new(CraftingData),
-	CraftingEventHead:       new(CraftingEvent),
-	AdventureSettingsHead:   new(AdventureSettings),
-	BlockEntityDataHead:     new(BlockEntityData),
-	FullChunkDataHead:       new(FullChunkData),
-	SetDifficultyHead:       new(SetDifficulty),
-	SetPlayerGametypeHead:   new(SetPlayerGametype),
-	PlayerListHead:          new(PlayerList),
-	RequestChunkRadiusHead:  new(RequestChunkRadius),
-	ChunkRadiusUpdateHead:   new(ChunkRadiusUpdate),
+var packets = map[byte]reflect.Type{
+	LoginHead:               reflect.TypeOf(Login{}),
+	PlayStatusHead:          reflect.TypeOf(PlayStatus{}),
+	DisconnectHead:          reflect.TypeOf(Disconnect{}),
+	BatchHead:               reflect.TypeOf(Batch{}),
+	TextHead:                reflect.TypeOf(Text{}),
+	SetTimeHead:             reflect.TypeOf(SetTime{}),
+	StartGameHead:           reflect.TypeOf(StartGame{}),
+	AddPlayerHead:           reflect.TypeOf(AddPlayer{}),
+	RemovePlayerHead:        reflect.TypeOf(RemovePlayer{}),
+	AddEntityHead:           reflect.TypeOf(AddEntity{}),
+	RemoveEntityHead:        reflect.TypeOf(RemoveEntity{}),
+	AddItemEntityHead:       reflect.TypeOf(AddItemEntity{}),
+	TakeItemEntityHead:      reflect.TypeOf(TakeItemEntity{}),
+	MoveEntityHead:          reflect.TypeOf(MoveEntity{}),
+	MovePlayerHead:          reflect.TypeOf(MovePlayer{}),
+	RemoveBlockHead:         reflect.TypeOf(RemoveBlock{}),
+	UpdateBlockHead:         reflect.TypeOf(UpdateBlock{}),
+	AddPaintingHead:         reflect.TypeOf(AddPainting{}),
+	ExplodeHead:             reflect.TypeOf(Explode{}),
+	LevelEventHead:          reflect.TypeOf(LevelEvent{}),
+	BlockEventHead:          reflect.TypeOf(BlockEvent{}),
+	EntityEventHead:         reflect.TypeOf(EntityEvent{}),
+	MobEffectHead:           reflect.TypeOf(MobEffect{}),
+	UpdateAttributesHead:    reflect.TypeOf(UpdateAttributes{}),
+	MobEquipmentHead:        reflect.TypeOf(MobEquipment{}),
+	MobArmorEquipmentHead:   reflect.TypeOf(MobArmorEquipment{}),
+	InteractHead:            reflect.TypeOf(Interact{}),
+	UseItemHead:             reflect.TypeOf(UseItem{}),
+	PlayerActionHead:        reflect.TypeOf(PlayerAction{}),
+	HurtArmorHead:           reflect.TypeOf(HurtArmor{}),
+	SetEntityDataHead:       reflect.TypeOf(SetEntityData{}),
+	SetEntityMotionHead:     reflect.TypeOf(SetEntityMotion{}),
+	SetEntityLinkHead:       reflect.TypeOf(SetEntityLink{}),
+	SetHealthHead:           reflect.TypeOf(SetHealth{}),
+	SetSpawnPositionHead:    reflect.TypeOf(SetSpawnPosition{}),
+	AnimateHead:             reflect.TypeOf(Animate{}),
+	RespawnHead:             reflect.TypeOf(Respawn{}),
+	DropItemHead:            reflect.TypeOf(DropItem{}),
+	ContainerOpenHead:       reflect.TypeOf(ContainerOpen{}),
+	ContainerCloseHead:      reflect.TypeOf(ContainerClose{}),
+	ContainerSetSlotHead:    reflect.TypeOf(ContainerSetSlot{}),
+	ContainerSetDataHead:    reflect.TypeOf(ContainerSetData{}),
+	ContainerSetContentHead: reflect.TypeOf(ContainerSetContent{}),
+	CraftingDataHead:        reflect.TypeOf(CraftingData{}),
+	CraftingEventHead:       reflect.TypeOf(CraftingEvent{}),
+	AdventureSettingsHead:   reflect.TypeOf(AdventureSettings{}),
+	BlockEntityDataHead:     reflect.TypeOf(BlockEntityData{}),
+	FullChunkDataHead:       reflect.TypeOf(FullChunkData{}),
+	SetDifficultyHead:       reflect.TypeOf(SetDifficulty{}),
+	SetPlayerGametypeHead:   reflect.TypeOf(SetPlayerGametype{}),
+	PlayerListHead:          reflect.TypeOf(PlayerList{}),
+	RequestChunkRadiusHead:  reflect.TypeOf(RequestChunkRadius{}),
+	ChunkRadiusUpdateHead:   reflect.TypeOf(ChunkRadiusUpdate{}),
 }
 
 // MCPEPacket is an interface for decoding/encoding MCPE packets.
@@ -143,8 +145,7 @@ type Handleable interface {
 
 // GetMCPEPacket returns MCPEPacket struct with given pid.
 func GetMCPEPacket(pid byte) MCPEPacket {
-	pk, _ := packets[pid]
-	return pk
+	return reflect.New(packets[pid]).Interface().(MCPEPacket)
 }
 
 // Login needs to be documented.
@@ -229,7 +230,6 @@ func (i Login) Handle(p *player) (err error) {
 	p.inventory.Holder = p
 	p.inventory.Init()
 
-	go p.once.Do(p.process)
 	p.firstSpawn()
 	p.Server.Message(p.Username + " joined the game")
 	// TODO
@@ -751,7 +751,10 @@ func (i MovePlayer) Write() *bytes.Buffer {
 
 // Handle implements Handleable interface.
 func (i MovePlayer) Handle(p *player) (err error) {
-	p.Position.X, p.Position.Y, p.Position.Z = i.X, i.Y, i.Z
+	x, y, z := unsafe.Pointer(&p.Position.X), unsafe.Pointer(&p.Position.Y), unsafe.Pointer(&p.Position.Z)
+	atomic.StorePointer(&x, unsafe.Pointer(&i.X))
+	atomic.StorePointer(&y, unsafe.Pointer(&i.Y))
+	atomic.StorePointer(&z, unsafe.Pointer(&i.Z))
 	i.EntityID = p.EntityID
 	p.Server.BroadcastPacket(&i, func(t *player) bool {
 		return t.UUID != p.UUID
