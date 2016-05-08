@@ -210,7 +210,7 @@ func (i Login) Handle(p *player) (err error) {
 		p.Disconnect("Authentication failure", err.Error())
 		return nil
 	}
-	log.Println("Autentication succeeded")
+	p.Position = Vector3{X: 0, Y: 80, Z: 0}
 	// Auth success!
 	p.SendPacket(&StartGame{
 		Seed:      0xffffffff, // -1
@@ -221,9 +221,9 @@ func (i Login) Handle(p *player) (err error) {
 		SpawnX:    0,
 		SpawnY:    uint32(80),
 		SpawnZ:    0,
-		X:         0,
-		Y:         80,
-		Z:         0,
+		X:         p.Position.X,
+		Y:         p.Position.Y,
+		Z:         p.Position.Z,
 	})
 	p.loggedIn = true
 	p.inventory.Holder = p
@@ -231,6 +231,7 @@ func (i Login) Handle(p *player) (err error) {
 
 	go p.once.Do(p.process)
 	p.firstSpawn()
+	p.Server.Message(p.Username + " joined the game")
 	// TODO
 
 	return
@@ -401,6 +402,14 @@ func (i Text) Write() *bytes.Buffer {
 		}
 	}
 	return buf
+}
+
+// Handle implements Handleable interface.
+func (i Text) Handle(p *player) (err error) {
+	if i.TextType == TextTypeChat {
+		p.Server.BroadcastPacket(&i, nil)
+	}
+	return nil
 }
 
 // Packet-specific constants
@@ -738,6 +747,16 @@ func (i MovePlayer) Write() *bytes.Buffer {
 	WriteByte(buf, i.Mode)
 	WriteByte(buf, i.OnGround)
 	return buf
+}
+
+// Handle implements Handleable interface.
+func (i MovePlayer) Handle(p *player) (err error) {
+	p.Position.X, p.Position.Y, p.Position.Z = i.X, i.Y, i.Z
+	i.EntityID = p.EntityID
+	p.Server.BroadcastPacket(&i, func(t *player) bool {
+		return t.UUID != p.UUID
+	})
+	return nil
 }
 
 // RemoveBlock needs to be documented.

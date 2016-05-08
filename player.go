@@ -39,6 +39,7 @@ type player struct {
 
 	inventory *PlayerInventory
 
+	SendRequest           chan MCPEPacket
 	SendCompressedRequest chan []MCPEPacket
 
 	chunkUpdate *time.Ticker
@@ -55,10 +56,8 @@ func NewPlayer(session *session) *player {
 	p.session = session
 	// p.Level = p.Server.GetDefaultLevel()
 	p.EntityID = atomic.AddUint64(&lastEntityID, 1)
-	p.playerShown = make(map[uint64]struct{})
 
-	p.updateTicker = time.NewTicker(time.Millisecond * 500)
-
+	p.SendRequest = make(chan MCPEPacket, chanBufsize)
 	p.SendCompressedRequest = make(chan []MCPEPacket, chanBufsize)
 	p.inventory = new(PlayerInventory)
 
@@ -145,6 +144,8 @@ func (p *player) process() {
 				Order:   OrderLayered,
 				Payload: res.chunk.FullChunkData(),
 			})
+		case pk := <-p.SendRequest:
+			p.SendPacket(pk)
 		case pks := <-p.SendCompressedRequest:
 			p.SendCompressed(pks...)
 
@@ -177,6 +178,7 @@ func (p *player) Disconnect(opts ...string) {
 	p.SendPacket(&Disconnect{
 		Message: msg,
 	})
+	p.Server.Message(p.Username + " quit the game")
 	p.Close(log)
 }
 

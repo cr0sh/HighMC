@@ -114,7 +114,6 @@ func (pk *OpenConnectionRequest1) Handle(session *session) {
 	if session.Status > 1 {
 		return
 	}
-	log.Println("Handling OCR1: Protocol", pk.Protocol)
 	buf := Pool.NewBuffer(nil)
 	p := &OpenConnectionReply1{
 		ServerID: serverID,
@@ -179,7 +178,6 @@ func (pk *OpenConnectionRequest2) Handle(session *session) {
 	if session.Status != 1 {
 		return
 	}
-	log.Println("Handling OCR2: clientID", pk.ClientID)
 	session.ID = pk.ClientID
 	atomic.StoreUint32(&session.mtuSize, uint32(pk.MtuSize))
 	buf := Pool.NewBuffer(nil)
@@ -353,7 +351,6 @@ func (pk *ClientConnect) Handle(session *session) {
 		return
 	}
 	buf := Pool.NewBuffer(nil)
-	log.Println("Client handshake")
 	p := &ServerHandshake{
 		Address:         session.Address,
 		SystemAddresses: AddressTemplate,
@@ -410,7 +407,7 @@ func (pk *ClientHandshake) Read(buf *bytes.Buffer) {
 
 // Handle implements RaknetPacket interfaces.
 func (pk *ClientHandshake) Handle(session *session) {
-	log.Println("Client connected successfully!")
+	log.Println("Raknet connection succeeded")
 	session.Status = 3
 	session.connComplete()
 }

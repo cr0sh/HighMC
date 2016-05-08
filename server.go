@@ -1,6 +1,9 @@
 package highmc
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
 // Server is a main server object.
 type Server struct {
@@ -15,6 +18,10 @@ type Server struct {
 		ok       chan error
 		register bool
 	}
+	broadcastRequest chan struct {
+		packet MCPEPacket
+		filter func(*player) bool
+	}
 }
 
 // NewServer creates new server object.
@@ -25,12 +32,18 @@ func NewServer() *Server {
 		defaultLvl: {Name: "dummy", Server: s},
 	}
 	s.players = make(map[string]*player)
+
 	s.callbackRequest = make(chan func(*player), chanBufsize)
 	s.registerRequest = make(chan struct {
 		player   *player
 		ok       chan error
 		register bool // false: unregister
 	}, chanBufsize)
+	s.broadcastRequest = make(chan struct {
+		packet MCPEPacket
+		filter func(*player) bool
+	}, chanBufsize)
+
 	s.close = make(chan struct{})
 	return s
 }
@@ -52,6 +65,14 @@ func (s *Server) process() {
 					continue
 				}
 				s.players[req.player.Address.String()] = req.player
+				req.player.playerShown = make(map[uint64]struct{})
+				for _, p := range s.players {
+					if p.EntityID == req.player.EntityID { // player self
+						continue
+					}
+					s.ShowPlayer(p, req.player)
+					s.ShowPlayer(req.player, p)
+				}
 				req.ok <- nil
 			} else {
 				if _, ok := s.players[req.player.Address.String()]; !ok {
@@ -60,6 +81,12 @@ func (s *Server) process() {
 				}
 				delete(s.players, req.player.Address.String())
 				req.ok <- nil
+			}
+		case req := <-s.broadcastRequest:
+			for _, p := range s.players {
+				if req.filter == nil || req.filter(p) {
+					p.SendRequest <- req.packet
+				}
 			}
 		}
 	}
@@ -101,4 +128,53 @@ func (s *Server) UnregisterPlayer(p *player) error {
 		return res
 	}
 	return nil
+}
+
+// BroadcastPacket broadcasts given MCPEPacket to all online players.
+// If filter is not nil server will send packet to players only filter returns true.
+func (s *Server) BroadcastPacket(pk MCPEPacket, filter func(*player) bool) {
+	s.broadcastRequest <- struct {
+		packet MCPEPacket
+		filter func(*player) bool
+	}{
+		pk,
+		filter,
+	}
+}
+
+// Message broadcasts message to all players.
+func (s *Server) Message(msg string) {
+	s.BroadcastPacket(&Text{
+		TextType: TextTypeRaw,
+		Message:  msg,
+	}, nil)
+	log.Println("Broadcast> " + msg)
+}
+
+// ShowPlayer shows p to t.
+func (s *Server) ShowPlayer(p, t *player) {
+	t.SendRequest <- &AddPlayer{
+		RawUUID:  p.UUID,
+		Username: p.Username,
+		EntityID: p.EntityID,
+		X:        p.Position.X,
+		Y:        p.Position.Y,
+		Z:        p.Position.Z,
+		BodyYaw:  p.BodyYaw,
+		Yaw:      p.Yaw,
+		Pitch:    p.Pitch,
+	}
+	t.playerShown[p.EntityID] = struct{}{}
+}
+
+// RemovePlayer hides p from t.
+func (s *Server) RemovePlayer(p, t *player) {
+	if _, ok := t.playerShown[p.EntityID]; !ok {
+		return
+	}
+	t.SendRequest <- &RemovePlayer{
+		EntityID: p.EntityID,
+		RawUUID:  p.UUID,
+	}
+	delete(t.playerShown, p.EntityID)
 }
