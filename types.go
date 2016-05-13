@@ -41,7 +41,7 @@ type ChunkDelivery struct {
 }
 
 // Chunk contains block data for each MCPE level chunks.
-// Each chunk holds 16*16*128 blocks, and consumes at least 83200 bytes of memory.
+// Each chunk holds 16*16*128 blocks, and consumes at least 83208 bytes of memory.
 //
 // A zero value for Chunk is a valid value.
 type Chunk struct {
@@ -52,7 +52,8 @@ type Chunk struct {
 	HeightMap    [16 * 16]byte
 	BiomeData    [16 * 16 * 4]byte // Uints
 
-	Refs uint64
+	Position ChunkPos
+	Refs     uint64
 }
 
 // FallbackChunk is a chunk to be returned if level provider fails to load chunk from file.
@@ -196,7 +197,7 @@ func (c *Chunk) FullChunkData() []byte {
 	Write(buf, c.LightData[:])
 	Write(buf, c.HeightMap[:])
 	Write(buf, c.BiomeData[:])
-	Write(buf, []byte{0, 0, 0, 0})                                   // Extra data: NBT length 0
+	Write(buf, []byte{0, 0, 0, 0}) // Extra data: NBT length 0
 	// No tile entity NBT fields
 	return buf.Bytes()
 }

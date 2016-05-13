@@ -105,8 +105,9 @@ type chunkRequest struct {
 type Level struct {
 	LoadedChunks map[ChunkPos]*Chunk
 
-	Name   string
-	Server *Server
+	Name     string
+	Server   *Server
+	Provider LevelProvider
 
 	roChan       chan func(LevelReader)
 	rwChan       chan func(LevelReadWriter)
@@ -117,6 +118,7 @@ type Level struct {
 // Init initializes the level.
 func (lv *Level) Init() {
 	lv.LoadedChunks = make(map[ChunkPos]*Chunk)
+	lv.Provider.Init("default")
 
 	lv.roChan = make(chan func(LevelReader), chanBufsize)
 	lv.rwChan = make(chan func(LevelReadWriter), chanBufsize)
@@ -125,6 +127,13 @@ func (lv *Level) Init() {
 }
 
 func (lv *Level) process() {
+	replyChans := make(map[ChunkPos][]chan<- *Chunk)
+	requestChan := make(chan chunkRequest, chanBufsize)
+	replyChan := make(chan *Chunk, chanBufsize)
+	n := runtime.NumCPU()
+	for i := 0; i < n; i++ {
+		go lv.chunkWorker(requestChan)
+	}
 	for {
 		select {
 		/*
@@ -133,17 +142,33 @@ func (lv *Level) process() {
 			case callback := <-lv.rwChan:
 				lv.RW(callback)
 		*/
+		case req := <-lv.chunkRequest:
+			replyChans[req.pos] = append(replyChans[req.pos], req.reply)
+			req.reply = replyChan
+		case rep := <-replyChan:
+			if chs, ok := replyChans[rep.Position]; ok {
+				for _, ch := range chs {
+					ch <- rep
+				}
+			} else {
+				panic("Reply chunk position is invalid")
+			}
 		}
-	}
-	n := runtime.NumCPU()
-	for i := 0; i < n; i++ {
-		go lv.chunkWorker()
 	}
 }
 
-func (lv *Level) chunkWorker() {
-	for req := range lv.chunkRequest {
-		req.reply <- nil // TODO
+func (lv *Level) chunkWorker(request chan chunkRequest) {
+	for req := range request {
+		if dir, ok = lv.Provider.Loadable(req.pos); ok { // file exists
+			chunk, err := lv.Provider.LoadChunk(req.pos, dir)
+			if err != nil {
+				panic("Chunk load error")
+			}
+			req.reply <- chunk
+		} else {
+			// Create chunk
+			req.reply <- nil // TODO
+		}
 	}
 }
 
@@ -186,7 +211,7 @@ func (lv *Level) GetID(p BlockPos) byte {
 	return lv.LoadedChunks[GetChunkPos(p)].GetBlock(byte(p.X&0xf), p.Y, byte(p.Z&0xf))
 }
 
-// GetBlockMeta returns Block Meta from level.
+// GetMeta returns Block Meta from level.
 func (lv *Level) GetMeta(p BlockPos) byte {
 	return lv.LoadedChunks[GetChunkPos(p)].GetBlockMeta(byte(p.X&0xf), p.Y, byte(p.Z&0xf))
 }
