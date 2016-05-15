@@ -159,7 +159,7 @@ func (lv *Level) process() {
 
 func (lv *Level) chunkWorker(request chan chunkRequest) {
 	for req := range request {
-		if dir, ok = lv.Provider.Loadable(req.pos); ok { // file exists
+                if dir, ok := lv.Provider.Loadable(req.pos); ok { // file exists
 			chunk, err := lv.Provider.LoadChunk(req.pos, dir)
 			if err != nil {
 				panic("Chunk load error")
